@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"potpuri/internal/domain"
@@ -29,7 +30,7 @@ type Server struct {
 func NewServer(svc *usecase.Service) *Server {
 	return &Server{
 		svc:         svc,
-		index:       template.Must(template.New("index").Parse(indexHTML)),
+		index:       template.Must(template.New("index").Funcs(template.FuncMap{"renderBody": renderBody}).Parse(indexHTML)),
 		loginTpl:    template.Must(template.New("login").Parse(loginHTML)),
 		registerTpl: template.Must(template.New("register").Parse(registerHTML)),
 		addTpl:      template.Must(template.New("add").Parse(addHTML)),
@@ -473,6 +474,54 @@ func writeJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+var uploadedFileBlockRE = regexp.MustCompile("(?s)### ([^\n]+)\n\nContent-Type: ([^\n]+)\nSize: [0-9]+ bytes\n\n```base64\n([A-Za-z0-9+/=\\r\\n]+)\n```")
+
+func renderBody(body string) template.HTML {
+	var out strings.Builder
+	last := 0
+	for _, match := range uploadedFileBlockRE.FindAllStringSubmatchIndex(body, -1) {
+		out.WriteString(template.HTMLEscapeString(body[last:match[0]]))
+		filename := body[match[2]:match[3]]
+		contentType := body[match[4]:match[5]]
+		rawBase64 := body[match[6]:match[7]]
+		if dataURL, ok := imageDataURL(contentType, rawBase64); ok {
+			out.WriteString(`<figure class="uploaded-image-frame"><img class="uploaded-image" src="`)
+			out.WriteString(template.HTMLEscapeString(dataURL))
+			out.WriteString(`" alt="`)
+			out.WriteString(template.HTMLEscapeString(filename))
+			out.WriteString(`"><figcaption>`)
+			out.WriteString(template.HTMLEscapeString(filename))
+			out.WriteString(`</figcaption></figure>`)
+		} else {
+			out.WriteString(template.HTMLEscapeString(body[match[0]:match[1]]))
+		}
+		last = match[1]
+	}
+	out.WriteString(template.HTMLEscapeString(body[last:]))
+	return template.HTML(out.String())
+}
+
+func imageDataURL(contentType, rawBase64 string) (string, bool) {
+	contentType = strings.TrimSpace(strings.ToLower(contentType))
+	switch contentType {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return "", false
+	}
+	encoded := strings.Map(func(r rune) rune {
+		switch r {
+		case '\r', '\n', '\t', ' ':
+			return -1
+		default:
+			return r
+		}
+	}, rawBase64)
+	if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {
+		return "", false
+	}
+	return "data:" + contentType + ";base64," + encoded, true
+}
+
 func manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json")
 	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}`))
@@ -523,7 +572,10 @@ const baseCSS = `
     article{border-top:1px solid #ddd;padding:16px 0}
     article h2{margin-bottom:4px}
     small{color:#555}
-    pre{white-space:pre-wrap;overflow-wrap:anywhere}
+    pre,.item-body{white-space:pre-wrap;overflow-wrap:anywhere}
+    .uploaded-image-frame{margin:12px 0}
+    .uploaded-image{display:block;max-width:100%;height:auto;border-radius:12px}
+    .uploaded-image-frame figcaption{font-size:.85rem;color:#555;margin-top:6px}
 `
 
 const indexHTML = `<!doctype html>
@@ -554,7 +606,7 @@ const indexHTML = `<!doctype html>
         <h2>{{.Title}}</h2>
         <small>{{.Type}} · {{.CreatedAt}} · {{range .Tags}}#{{.}} {{end}}</small>
         {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
-        <pre>{{.Body}}</pre>
+        <div class="item-body">{{renderBody .Body}}</div>
         <div class="actions">
           <a class="button ghost" href="/items/edit?id={{.ID}}">Edit</a>
           <form method="post" action="/items/delete">

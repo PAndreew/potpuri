@@ -314,6 +314,44 @@ func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	}
 }
 
+func TestHomeRendersUploadedImageBlocksAsRoundedImages(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "image@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "<script>alert(1)</script>\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
+	if _, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: body}); err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	page := rec.Body.String()
+	for _, want := range []string{`class="uploaded-image"`, `border-radius:12px`, `src="data:image/png;base64,AQID"`, `alt="photo.png"`, `<figcaption>photo.png</figcaption>`, `&lt;script&gt;alert(1)&lt;/script&gt;`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("home page missing rendered image detail %s: %s", want, page)
+		}
+	}
+	for _, removed := range []string{`<script>alert(1)</script>`, "```base64\nAQID\n```"} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("home page should not expose raw body fragment %q: %s", removed, page)
+		}
+	}
+}
+
 func TestRoseLogoIsServedAsSVG(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
