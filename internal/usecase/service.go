@@ -17,6 +17,7 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrUnauthorized       = errors.New("unauthorized")
+	ErrNotFound           = errors.New("not found")
 )
 
 type Service struct {
@@ -179,6 +180,17 @@ func (s *Service) SearchItems(ctx context.Context, userID, query string) ([]doma
 		return nil, err
 	}
 	return s.decryptItems(stored)
+}
+
+func (s *Service) DeleteItem(ctx context.Context, userID, itemID string) error {
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ErrNotFound
+	}
+	return s.items.DeleteItem(ctx, userID, itemID)
 }
 
 func (s *Service) decryptItems(stored []ports.StoredItem) ([]domain.Item, error) {

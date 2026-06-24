@@ -30,6 +30,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/items", s.createItemHTML)
+	mux.HandleFunc("/items/delete", s.deleteItemHTML)
 	mux.HandleFunc("/api/items", s.itemsAPI)
 	mux.HandleFunc("/api/clipboard", s.clipboardAPI)
 	mux.HandleFunc("/manifest.webmanifest", manifest)
@@ -123,6 +124,23 @@ func (s *Server) createItemHTML(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) deleteItemHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	if err := s.svc.DeleteItem(r.Context(), userID, r.FormValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func (s *Server) itemsAPI(w http.ResponseWriter, r *http.Request) {
 	userID, err := s.currentUserID(r)
 	if err != nil {
@@ -150,6 +168,16 @@ func (s *Server) itemsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, item)
+	case http.MethodDelete:
+		itemID := strings.TrimPrefix(r.URL.Path, "/api/items/")
+		if itemID == "" || itemID == r.URL.Path {
+			itemID = r.URL.Query().Get("id")
+		}
+		if err := s.svc.DeleteItem(r.Context(), userID, itemID); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -338,6 +366,8 @@ const indexHTML = `<!doctype html>
     .field{margin-bottom:12px}
     label{display:block;font-size:.9rem;color:#333}
     article{border-top:1px solid #ddd;padding:16px 0}
+    article h2{margin-bottom:4px}
+    article form{margin-top:8px}
     small{color:#555}
     pre{white-space:pre-wrap}
   </style>
@@ -376,6 +406,10 @@ const indexHTML = `<!doctype html>
         <small>{{.Type}} · {{.CreatedAt}} · {{range .Tags}}#{{.}} {{end}}</small>
         {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
         <pre>{{.Body}}</pre>
+        <form method="post" action="/items/delete">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <button>Delete</button>
+        </form>
       </article>
     {{else}}
       <p>No entries yet.</p>

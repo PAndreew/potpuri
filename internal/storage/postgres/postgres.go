@@ -83,6 +83,18 @@ from items where user_id = $1 and search_tokens && $2 order by created_at desc`,
 	return scanItems(rows)
 }
 
+func (s *Store) DeleteItem(ctx context.Context, userID string, itemID string) error {
+	result, err := s.db.ExecContext(ctx, `delete from items where user_id = $1 and id = $2`, userID, itemID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("item not found")
+	}
+	return nil
+}
+
 func (s *Store) CreateSession(ctx context.Context, session ports.Session) error {
 	_, err := s.db.ExecContext(ctx, `insert into sessions (token_hash, user_id, expires_at) values ($1, $2, $3)`, session.TokenHash, session.UserID, session.ExpiresAt)
 	return err

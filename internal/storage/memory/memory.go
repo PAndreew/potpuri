@@ -91,6 +91,18 @@ func (s *Store) SearchItems(ctx context.Context, userID string, tokens []string)
 	return out, nil
 }
 
+func (s *Store) DeleteItem(ctx context.Context, userID string, itemID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, item := range s.items {
+		if item.UserID == userID && item.ID == itemID {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("item not found")
+}
+
 func (s *Store) CreateSession(ctx context.Context, session ports.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

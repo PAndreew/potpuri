@@ -126,3 +126,41 @@ func TestHTMLCreateCombinesURLNoteAndFileIntoOneEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthenticatedUserCanDeleteItemThroughHTML(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "delete@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Temporary", Body: "delete route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/items/delete", strings.NewReader("id="+item.ID))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected item to be deleted, got %#v", items)
+	}
+}

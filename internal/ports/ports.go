@@ -16,6 +16,7 @@ type ItemRepository interface {
 	CreateItem(ctx context.Context, item StoredItem) error
 	ListItems(ctx context.Context, userID string) ([]StoredItem, error)
 	SearchItems(ctx context.Context, userID string, tokens []string) ([]StoredItem, error)
+	DeleteItem(ctx context.Context, userID string, itemID string) error
 }
 
 type SessionRepository interface {

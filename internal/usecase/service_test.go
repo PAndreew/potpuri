@@ -105,6 +105,43 @@ func TestSearchFindsEncryptedItemsByBlindIndex(t *testing.T) {
 	}
 }
 
+func TestUserCanDeleteOnlyTheirOwnItem(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newTestService(t)
+	owner, err := svc.Register(ctx, usecase.RegisterInput{Email: "owner@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.Register(ctx, usecase.RegisterInput{Email: "other@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.CreateItem(ctx, usecase.CreateItemInput{UserID: owner.ID, Title: "Delete me", Body: "private"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteItem(ctx, other.ID, item.ID); err == nil {
+		t.Fatal("expected other user delete to fail")
+	}
+	items, err := svc.ListItems(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("item should still exist for owner: %#v", items)
+	}
+	if err := svc.DeleteItem(ctx, owner.ID, item.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err = svc.ListItems(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected deleted item to be gone, got %#v", items)
+	}
+}
+
 func TestLoginCreatesUsableSession(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
