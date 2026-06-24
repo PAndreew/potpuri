@@ -207,6 +207,80 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	}
 }
 
+func TestSignedOutHomeShowsIntroAndSignInLink(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="signed-out"`,
+		`src="/static/rose.svg"`,
+		`<h1>Potpuri</h1>`,
+		`Potpuri is a minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.`,
+		`href="/login">Sign in</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("signed out home missing %s: %s", want, body)
+		}
+	}
+	for _, removed := range []string{`action="/register"`, `action="/login"`, `<h2>Register</h2>`} {
+		if strings.Contains(body, removed) {
+			t.Fatalf("signed out home should not show auth form %q: %s", removed, body)
+		}
+	}
+}
+
+func TestLoginPageShowsCenteredSignInFormWithSignUpLink(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{`<title>Sign in - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `action="/login"`, `type="email"`, `type="password"`, `<button>Sign in</button>`, `class="signup-link" href="/register">Sign up</a>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("login page missing %s: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `action="/register"`) {
+		t.Fatalf("login page should link to sign up rather than render the sign up form: %s", body)
+	}
+}
+
+func TestRegisterPageShowsCenteredSignUpForm(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/register", nil)
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{`<title>Sign up - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `action="/register"`, `type="email"`, `type="password"`, `<button>Sign up</button>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("register page missing %s: %s", want, body)
+		}
+	}
+}
+
 func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))

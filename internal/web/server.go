@@ -18,18 +18,22 @@ import (
 var roseSVG []byte
 
 type Server struct {
-	svc     *usecase.Service
-	index   *template.Template
-	addTpl  *template.Template
-	editTpl *template.Template
+	svc         *usecase.Service
+	index       *template.Template
+	loginTpl    *template.Template
+	registerTpl *template.Template
+	addTpl      *template.Template
+	editTpl     *template.Template
 }
 
 func NewServer(svc *usecase.Service) *Server {
 	return &Server{
-		svc:     svc,
-		index:   template.Must(template.New("index").Parse(indexHTML)),
-		addTpl:  template.Must(template.New("add").Parse(addHTML)),
-		editTpl: template.Must(template.New("edit").Funcs(template.FuncMap{"joinTags": joinTags}).Parse(editHTML)),
+		svc:         svc,
+		index:       template.Must(template.New("index").Parse(indexHTML)),
+		loginTpl:    template.Must(template.New("login").Parse(loginHTML)),
+		registerTpl: template.Must(template.New("register").Parse(registerHTML)),
+		addTpl:      template.Must(template.New("add").Parse(addHTML)),
+		editTpl:     template.Must(template.New("edit").Funcs(template.FuncMap{"joinTags": joinTags}).Parse(editHTML)),
 	}
 }
 
@@ -87,7 +91,7 @@ func (s *Server) add(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		_ = s.registerTpl.Execute(w, nil)
 		return
 	}
 	user, err := s.svc.Register(r.Context(), usecase.RegisterInput{Email: r.FormValue("email"), Password: r.FormValue("password")})
@@ -106,7 +110,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		_ = s.loginTpl.Execute(w, nil)
 		return
 	}
 	token, err := s.svc.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
@@ -495,8 +499,20 @@ const baseCSS = `
     a{color:#0645ad}
     header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
     header h1{font-size:1.5rem;margin:0}
-    .brand{display:flex;align-items:center;gap:8px}
+    .brand{display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none}
     .brand img{width:28px;height:28px}
+    .signed-out{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center;text-align:center}
+    .intro{max-width:480px;margin:0 auto}
+    .intro img{width:84px;height:84px;margin-bottom:16px}
+    .intro h1{font-size:2rem;margin:0 0 12px}
+    .intro p{margin:0 0 24px;color:#333}
+    .intro .button{min-width:112px}
+    .auth-page{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center}
+    .auth-form{width:100%;max-width:360px}
+    .auth-form h1{text-align:center;font-size:2rem;margin:0 0 20px}
+    .auth-actions{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:4px}
+    .auth-actions button{margin:0}
+    .signup-link{color:#0645ad}
     header form{margin:0}
     .top-link{display:block;margin:0 0 12px}
     .search{display:flex;gap:8px;align-items:start}
@@ -553,19 +569,68 @@ const indexHTML = `<!doctype html>
       navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
     </script>
   {{else}}
-    <h2>Register</h2>
-    <form method="post" action="/register">
-      <input name="email" type="email" placeholder="Email">
-      <input name="password" type="password" placeholder="Password">
-      <button>Register</button>
-    </form>
-    <h2>Log in</h2>
-    <form method="post" action="/login">
-      <input name="email" type="email" placeholder="Email">
-      <input name="password" type="password" placeholder="Password">
-      <button>Log in</button>
-    </form>
+    <main class="signed-out">
+      <div class="intro">
+        <img src="/static/rose.svg" alt="">
+        <h1>Potpuri</h1>
+        <p>Potpuri is a minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.</p>
+        <a class="button" href="/login">Sign in</a>
+      </div>
+    </main>
   {{end}}
+</body>
+</html>`
+
+const loginHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
+  <title>Sign in - Potpuri</title>
+  <style>
+` + baseCSS + `
+  </style>
+</head>
+<body>
+  <main class="auth-page">
+    <form class="auth-form" method="post" action="/login">
+      <h1>Sign in</h1>
+      <input name="email" type="email" placeholder="Email">
+      <input name="password" type="password" placeholder="Password">
+      <div class="auth-actions">
+        <button>Sign in</button>
+        <a class="signup-link" href="/register">Sign up</a>
+      </div>
+    </form>
+  </main>
+</body>
+</html>`
+
+const registerHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
+  <title>Sign up - Potpuri</title>
+  <style>
+` + baseCSS + `
+  </style>
+</head>
+<body>
+  <main class="auth-page">
+    <form class="auth-form" method="post" action="/register">
+      <h1>Sign up</h1>
+      <input name="email" type="email" placeholder="Email">
+      <input name="password" type="password" placeholder="Password">
+      <div class="auth-actions">
+        <button>Sign up</button>
+      </div>
+    </form>
+  </main>
 </body>
 </html>`
 
