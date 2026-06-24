@@ -45,6 +45,12 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 }
 
 func (s *Store) CreateItem(ctx context.Context, item ports.StoredItem) error {
+	if item.SearchTokens == nil {
+		item.SearchTokens = []string{}
+	}
+	if item.Tags == nil {
+		item.Tags = []string{}
+	}
 	_, err := s.db.ExecContext(ctx, `
 insert into items (id, user_id, type, title_ciphertext, body_ciphertext, url_ciphertext, search_tokens, tags, created_at)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
