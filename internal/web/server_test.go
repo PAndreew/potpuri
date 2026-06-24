@@ -137,7 +137,7 @@ func TestClipboardAPIRejectsEmptyCapture(t *testing.T) {
 	}
 }
 
-func TestAddPageHasClipboardStatusAndFallbackInputs(t *testing.T) {
+func TestAddPageHasManualCaptureFormWithoutClipboardButton(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
 	if err != nil {
@@ -159,16 +159,15 @@ func TestAddPageHasClipboardStatusAndFallbackInputs(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`id="clipboard-button"`, `id="clipboard-status"`, `id="body"`, `id="files"`} {
+	for _, want := range []string{`id="body"`, `id="files"`, `name="source_url"`, `>Add</button>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("add page missing %s: %s", want, body)
 		}
 	}
-	if !strings.Contains(body, "Nothing to add") || !strings.Contains(body, "Clipboard read timed out") || !strings.Contains(body, "Promise.race") {
-		t.Fatalf("add page missing clipboard feedback copy: %s", body)
-	}
-	if strings.Contains(body, "navigator.clipboard.read)") || strings.Contains(body, "item.types") {
-		t.Fatalf("clipboard button should not inspect file clipboard data: %s", body)
+	for _, removed := range []string{`Add clipboard`, `navigator.clipboard`, `clipboard-button`, `clipboard-status`, `Promise.race`} {
+		if strings.Contains(body, removed) {
+			t.Fatalf("add page still contains clipboard behavior %q: %s", removed, body)
+		}
 	}
 }
 

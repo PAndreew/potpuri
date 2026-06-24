@@ -542,50 +542,9 @@ const addHTML = `<!doctype html>
     <input name="source_url" placeholder="Optional source URL">
     <input name="tags" placeholder="tags, comma separated">
     <button>Add</button>
-    <button id="clipboard-button" type="button" onclick="addClipboard()">Add clipboard</button>
-    <p id="clipboard-status" role="status"></p>
   </form>
   <script>
     navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
-    async function addClipboard(){
-      const button = document.getElementById("clipboard-button");
-      const status = document.getElementById("clipboard-status");
-      const body = document.getElementById("body");
-      const files = document.getElementById("files");
-      const form = new FormData();
-      let text = "";
-      button.disabled = true;
-      status.textContent = "Reading clipboard...";
-      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("Clipboard read timed out")), ms));
-      const withTimeout = (promise) => Promise.race([promise, timeout(2500)]);
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        try {
-          text = await withTimeout(navigator.clipboard.readText());
-        } catch (err) {
-          status.textContent = "Clipboard text was not available. Paste into the box or choose a file.";
-        }
-      }
-      if (!text && body.value.trim()) {
-        text = body.value;
-      }
-      for (const file of files.files) {
-        form.append("files", file);
-      }
-      if (!text && !form.has("files")) {
-        status.textContent = "Nothing to add. Paste text here or choose a file, then try again.";
-        button.disabled = false;
-        return;
-      }
-      form.append("body", text);
-      status.textContent = "Adding...";
-      const response = await fetch("/api/clipboard", {method:"POST", body:form});
-      if (!response.ok) {
-        status.textContent = (await response.text()).trim() || "Could not add clipboard.";
-        button.disabled = false;
-        return;
-      }
-      location.href = "/";
-    }
   </script>
 </body>
 </html>`
