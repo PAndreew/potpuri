@@ -1,6 +1,7 @@
 package web
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,9 @@ import (
 	"potpuri/internal/domain"
 	"potpuri/internal/usecase"
 )
+
+//go:embed static/rose.svg
+var roseSVG []byte
 
 type Server struct {
 	svc    *usecase.Service
@@ -41,6 +45,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/clipboard", s.clipboardAPI)
 	mux.HandleFunc("/manifest.webmanifest", manifest)
 	mux.HandleFunc("/sw.js", serviceWorker)
+	mux.HandleFunc("/static/rose.svg", roseLogo)
 	return mux
 }
 
@@ -405,12 +410,17 @@ func writeJSON(w http.ResponseWriter, value any) {
 
 func manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json")
-	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[]}`))
+	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}`))
 }
 
 func serviceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript")
 	_, _ = w.Write([]byte(`self.addEventListener("install",event=>self.skipWaiting());self.addEventListener("fetch",()=>{});`))
+}
+
+func roseLogo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	_, _ = w.Write(roseSVG)
 }
 
 const baseCSS = `
@@ -420,6 +430,8 @@ const baseCSS = `
     a{color:#0645ad}
     header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
     header h1{font-size:1.5rem;margin:0}
+    .brand{display:flex;align-items:center;gap:8px}
+    .brand img{width:28px;height:28px}
     header form{margin:0}
     .top-link{display:block;margin:0 0 12px}
     .search{display:flex;gap:8px;align-items:start}
@@ -439,6 +451,7 @@ const indexHTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
   <title>Potpuri</title>
   <style>
 ` + baseCSS + `
@@ -447,7 +460,7 @@ const indexHTML = `<!doctype html>
 <body>
   {{if .UserID}}
     <header>
-      <h1>Potpuri</h1>
+      <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
       <form method="post" action="/logout"><button>Log out</button></form>
     </header>
     <a class="top-link" href="/add">Add to Potpuri</a>
@@ -495,6 +508,7 @@ const addHTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
   <title>Add to Potpuri</title>
   <style>
 ` + baseCSS + `
@@ -502,7 +516,7 @@ const addHTML = `<!doctype html>
 </head>
 <body>
   <header>
-    <h1>Potpuri</h1>
+    <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
     <form method="post" action="/logout"><button>Log out</button></form>
   </header>
   <a class="top-link" href="/">Back to items</a>

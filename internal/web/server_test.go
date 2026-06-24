@@ -132,8 +132,34 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	if !strings.Contains(body, `href="/add"`) {
 		t.Fatalf("home page missing add link: %s", body)
 	}
+	if !strings.Contains(body, `href="/static/rose.svg"`) || !strings.Contains(body, `src="/static/rose.svg"`) {
+		t.Fatalf("home page missing rose logo/favicon: %s", body)
+	}
 	if strings.Contains(body, `name="source_url"`) || strings.Contains(body, `type="file"`) {
 		t.Fatalf("home page should not show capture form: %s", body)
+	}
+}
+
+func TestRoseLogoIsServedAsSVG(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/static/rose.svg", nil)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected logo to be served, got %d", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "image/svg+xml") {
+		t.Fatalf("expected SVG content type, got %q", contentType)
+	}
+	if !strings.Contains(rec.Body.String(), "<svg") {
+		t.Fatalf("expected SVG body, got %s", rec.Body.String())
 	}
 }
 

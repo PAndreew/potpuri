@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Potpuri rose curve">
+  <rect width="128" height="128" rx="24" fill="#fff"/>
+  <circle cx="64" cy="64" r="48" fill="none" stroke="#111" stroke-width="2"/>
+  <path d="M64 16
+           C75 44 84 53 112 64
+           C84 75 75 84 64 112
+           C53 84 44 75 16 64
+           C44 53 53 44 64 16Z"
+        fill="none" stroke="#0b57d0" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M64 28
+           C70 50 78 58 100 64
+           C78 70 70 78 64 100
+           C58 78 50 70 28 64
+           C50 58 58 50 64 28Z"
+        fill="none" stroke="#111" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="4" fill="#111"/>
+</svg>
