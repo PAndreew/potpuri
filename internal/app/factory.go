@@ -13,18 +13,22 @@ import (
 )
 
 type Factory struct {
-	Addr          string
-	DatabaseURL   string
-	EncryptionKey string
-	SessionSecret string
+	Addr              string
+	DatabaseURL       string
+	EncryptionKey     string
+	SessionSecret     string
+	AllowRegistration bool
+	SecureCookies     bool
 }
 
 func FactoryFromEnv() Factory {
 	return Factory{
-		Addr:          envDefault("POTPURI_ADDR", ":8080"),
-		DatabaseURL:   os.Getenv("POTPURI_DATABASE_URL"),
-		EncryptionKey: os.Getenv("POTPURI_ENCRYPTION_KEY"),
-		SessionSecret: os.Getenv("POTPURI_SESSION_SECRET"),
+		Addr:              envDefault("POTPURI_ADDR", ":8080"),
+		DatabaseURL:       os.Getenv("POTPURI_DATABASE_URL"),
+		EncryptionKey:     os.Getenv("POTPURI_ENCRYPTION_KEY"),
+		SessionSecret:     os.Getenv("POTPURI_SESSION_SECRET"),
+		AllowRegistration: envBool("POTPURI_ALLOW_REGISTRATION", false),
+		SecureCookies:     envBool("POTPURI_SECURE_COOKIES", true),
 	}
 }
 
@@ -55,7 +59,10 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		Cipher:   cipher,
 		Hasher:   security.NewPasswordHasher(),
 	})
-	handler := web.NewServer(svc)
+	handler := web.NewServerWithConfig(svc, web.Config{
+		AllowRegistration: f.AllowRegistration,
+		SecureCookies:     f.SecureCookies,
+	})
 	server := &http.Server{Addr: f.Addr, Handler: handler.Routes()}
 	return server, store.Close, nil
 }
@@ -65,4 +72,19 @@ func envDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(name string, fallback bool) bool {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+	switch value {
+	case "1", "true", "TRUE", "yes", "YES", "on", "ON":
+		return true
+	case "0", "false", "FALSE", "no", "NO", "off", "OFF":
+		return false
+	default:
+		return fallback
+	}
 }

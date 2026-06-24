@@ -281,6 +281,59 @@ func TestRegisterPageShowsCenteredSignUpForm(t *testing.T) {
 	}
 }
 
+func TestRegistrationCanBeClosed(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServerWithConfig(svc, web.Config{AllowRegistration: false})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/register", nil)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("closed registration GET should be forbidden, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	server.Routes().ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), `href="/register"`) {
+		t.Fatalf("login should not link to closed registration: %s", rec.Body.String())
+	}
+}
+
+func TestSecureCookieSettingsCanBeEnabled(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	if _, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "cookie@example.com", Password: "correct horse"}); err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServerWithConfig(svc, web.Config{AllowRegistration: false, SecureCookies: true})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("email=cookie%40example.com&password=correct+horse"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("login failed: %d %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one session cookie, got %#v", cookies)
+	}
+	cookie := cookies[0]
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie should be HttpOnly, Secure, SameSite Strict: %#v", cookie)
+	}
+}
+
 func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))

@@ -25,9 +25,19 @@ type Server struct {
 	registerTpl *template.Template
 	addTpl      *template.Template
 	editTpl     *template.Template
+	config      Config
+}
+
+type Config struct {
+	AllowRegistration bool
+	SecureCookies     bool
 }
 
 func NewServer(svc *usecase.Service) *Server {
+	return NewServerWithConfig(svc, Config{AllowRegistration: true})
+}
+
+func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 	return &Server{
 		svc:         svc,
 		index:       template.Must(template.New("index").Funcs(template.FuncMap{"renderBody": renderBody}).Parse(indexHTML)),
@@ -35,6 +45,7 @@ func NewServer(svc *usecase.Service) *Server {
 		registerTpl: template.Must(template.New("register").Parse(registerHTML)),
 		addTpl:      template.Must(template.New("add").Parse(addHTML)),
 		editTpl:     template.Must(template.New("edit").Funcs(template.FuncMap{"joinTags": joinTags}).Parse(editHTML)),
+		config:      config,
 	}
 }
 
@@ -91,6 +102,10 @@ func (s *Server) add(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if !s.config.AllowRegistration {
+		http.Error(w, "registration is closed", http.StatusForbidden)
+		return
+	}
 	if r.Method != http.MethodPost {
 		_ = s.registerTpl.Execute(w, nil)
 		return
@@ -105,13 +120,13 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	setSession(w, token)
+	s.setSession(w, token)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		_ = s.loginTpl.Execute(w, nil)
+		_ = s.loginTpl.Execute(w, map[string]any{"AllowRegistration": s.config.AllowRegistration})
 		return
 	}
 	token, err := s.svc.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
@@ -119,12 +134,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	setSession(w, token)
+	s.setSession(w, token)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -311,8 +326,8 @@ func (s *Server) currentUserID(r *http.Request) (string, error) {
 	return s.svc.UserIDForSession(r.Context(), cookie.Value)
 }
 
-func setSession(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 30 * 24 * 60 * 60})
+func (s *Server) setSession(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: token, Path: "/", HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 60 * 60})
 }
 
 func splitCSV(raw string) []string {
@@ -688,7 +703,9 @@ const loginHTML = `<!doctype html>
       <input name="password" type="password" placeholder="Password">
       <div class="auth-actions">
         <button>Sign in</button>
+        {{if .AllowRegistration}}
         <a class="signup-link" href="/register">Sign up</a>
+        {{end}}
       </div>
     </form>
   </main>
