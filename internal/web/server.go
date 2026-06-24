@@ -556,14 +556,23 @@ const addHTML = `<!doctype html>
       let text = "";
       button.disabled = true;
       status.textContent = "Reading clipboard...";
+      const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("Clipboard read timed out")), ms));
+      const withTimeout = (promise) => Promise.race([promise, timeout(2500)]);
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        try {
+          text = await withTimeout(navigator.clipboard.readText());
+        } catch (err) {
+          status.textContent = "Clipboard text was not available. Trying files...";
+        }
+      }
       if (navigator.clipboard && navigator.clipboard.read) {
         try {
-          const items = await navigator.clipboard.read();
+          const items = await withTimeout(navigator.clipboard.read());
           for (const item of items) {
             for (const type of item.types) {
-              const blob = await item.getType(type);
+              const blob = await withTimeout(item.getType(type));
               if (type.startsWith("text/")) {
-                text += await blob.text();
+                text += await withTimeout(blob.text());
               } else {
                 const ext = type.includes("/") ? type.split("/")[1].replace(/[^a-z0-9.+-]/gi, "") : "bin";
                 form.append("files", new File([blob], "clipboard." + ext, {type}));
@@ -571,14 +580,7 @@ const addHTML = `<!doctype html>
             }
           }
         } catch (err) {
-          status.textContent = "Clipboard file access was not allowed. Trying text...";
-        }
-      }
-      if (!text && navigator.clipboard && navigator.clipboard.readText) {
-        try {
-          text = await navigator.clipboard.readText();
-        } catch (err) {
-          status.textContent = "Clipboard text access was not allowed.";
+          status.textContent = "Clipboard file access was not available.";
         }
       }
       if (!text && body.value.trim()) {

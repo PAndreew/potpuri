@@ -164,7 +164,7 @@ func TestAddPageHasClipboardStatusAndFallbackInputs(t *testing.T) {
 			t.Fatalf("add page missing %s: %s", want, body)
 		}
 	}
-	if !strings.Contains(body, "Nothing to add") || !strings.Contains(body, "Clipboard text access was not allowed") {
+	if !strings.Contains(body, "Nothing to add") || !strings.Contains(body, "Clipboard read timed out") || !strings.Contains(body, "Promise.race") {
 		t.Fatalf("add page missing clipboard feedback copy: %s", body)
 	}
 }
