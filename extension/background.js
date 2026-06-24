@@ -10,21 +10,18 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const text = info.selectionText || info.linkUrl || tab?.url || "";
   await capture({
-    Type: info.linkUrl || tab?.url ? "url" : "note",
-    Title: tab?.title || "Captured item",
-    Body: text,
-    SourceURL: info.linkUrl || tab?.url || "",
-    Tags: ["browser-extension"]
+    text,
+    title: tab?.title || "Captured item",
+    url: info.linkUrl || tab?.url || ""
   });
 });
 
-async function capture(item) {
+async function capture(payload) {
   const { baseUrl = DEFAULT_BASE_URL } = await chrome.storage.sync.get("baseUrl");
-  await fetch(`${baseUrl.replace(/\/$/, "")}/api/items`, {
+  await fetch(`${baseUrl.replace(/\/$/, "")}/api/clipboard`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(item)
+    body: JSON.stringify(payload)
   });
 }
-

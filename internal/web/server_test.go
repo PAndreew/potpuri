@@ -70,6 +70,73 @@ func TestAuthenticatedUserCanCreateAndSearchThroughHTTP(t *testing.T) {
 	}
 }
 
+func TestClipboardAPIInfersURLItem(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "clip@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/clipboard", strings.NewReader(`{"text":"https://example.com/article"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clipboard capture failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.SearchItems(context.Background(), user.ID, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one URL item, got %#v", items)
+	}
+	if items[0].Type != "url" || items[0].SourceURL != "https://example.com/article" {
+		t.Fatalf("URL was not inferred: %#v", items[0])
+	}
+}
+
+func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "home@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/add"`) {
+		t.Fatalf("home page missing add link: %s", body)
+	}
+	if strings.Contains(body, `name="source_url"`) || strings.Contains(body, `type="file"`) {
+		t.Fatalf("home page should not show capture form: %s", body)
+	}
+}
+
 func TestHTMLCreateCombinesURLNoteAndFileIntoOneEntry(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))

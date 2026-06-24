@@ -14,17 +14,23 @@ import (
 )
 
 type Server struct {
-	svc *usecase.Service
-	tpl *template.Template
+	svc    *usecase.Service
+	index  *template.Template
+	addTpl *template.Template
 }
 
 func NewServer(svc *usecase.Service) *Server {
-	return &Server{svc: svc, tpl: template.Must(template.New("index").Parse(indexHTML))}
+	return &Server{
+		svc:    svc,
+		index:  template.Must(template.New("index").Parse(indexHTML)),
+		addTpl: template.Must(template.New("add").Parse(addHTML)),
+	}
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.home)
+	mux.HandleFunc("/add", s.add)
 	mux.HandleFunc("/register", s.register)
 	mux.HandleFunc("/login", s.login)
 	mux.HandleFunc("/logout", s.logout)
@@ -59,7 +65,16 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_ = s.tpl.Execute(w, map[string]any{"UserID": userID, "Items": items, "Query": r.URL.Query().Get("q")})
+	_ = s.index.Execute(w, map[string]any{"UserID": userID, "Items": items, "Query": r.URL.Query().Get("q")})
+}
+
+func (s *Server) add(w http.ResponseWriter, r *http.Request) {
+	userID, _ := s.currentUserID(r)
+	if userID == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	_ = s.addTpl.Execute(w, map[string]any{"UserID": userID})
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -193,14 +208,29 @@ func (s *Server) clipboardAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "login required", http.StatusUnauthorized)
 		return
 	}
-	var input struct {
-		Text string `json:"text"`
+	var itemInput usecase.CreateItemInput
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		var err error
+		itemInput, err = itemInputFromRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		var input struct {
+			Text   string `json:"text"`
+			Title  string `json:"title"`
+			URL    string `json:"url"`
+			Source string `json:"source"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		itemInput = itemInputFromClipboardText(input.Text, input.Title, firstNonEmpty(input.URL, input.Source))
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	item, err := s.svc.CreateItem(r.Context(), usecase.CreateItemInput{UserID: userID, Type: domain.ItemTypeNote, Title: "Clipboard", Body: input.Text, Tags: []string{"clipboard"}})
+	itemInput.UserID = userID
+	item, err := s.svc.CreateItem(r.Context(), itemInput)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -225,6 +255,28 @@ func splitCSV(raw string) []string {
 		return nil
 	}
 	return strings.Split(raw, ",")
+}
+
+func itemInputFromClipboardText(text, title, sourceURL string) usecase.CreateItemInput {
+	text = strings.TrimSpace(text)
+	sourceURL = strings.TrimSpace(sourceURL)
+	if sourceURL == "" && isLikelyURL(text) {
+		sourceURL = text
+	}
+	if title == "" {
+		title = defaultTitle(sourceURL, "", text)
+	}
+	body := text
+	if sourceURL != "" && body == sourceURL {
+		body = ""
+	}
+	return usecase.CreateItemInput{
+		Type:      inferredType(sourceURL, ""),
+		Title:     title,
+		Body:      body,
+		SourceURL: sourceURL,
+		Tags:      []string{"clipboard"},
+	}
 }
 
 func itemInputFromRequest(r *http.Request) (usecase.CreateItemInput, error) {
@@ -315,6 +367,20 @@ func inferredType(sourceURL, firstFilename string) domain.ItemType {
 	return domain.ItemTypeNote
 }
 
+func isLikelyURL(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func defaultTitle(sourceURL, firstFilename, body string) string {
 	if sourceURL != "" {
 		return sourceURL
@@ -347,20 +413,15 @@ func serviceWorker(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`self.addEventListener("install",event=>self.skipWaiting());self.addEventListener("fetch",()=>{});`))
 }
 
-const indexHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <title>Potpuri</title>
-  <style>
+const baseCSS = `
     body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.45}
     input,textarea,button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
     button{width:auto}
+    a{color:#0645ad}
     header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
     header h1{font-size:1.5rem;margin:0}
     header form{margin:0}
+    .top-link{display:block;margin:0 0 12px}
     .search{display:flex;gap:8px;align-items:start}
     .search input{flex:1}
     .field{margin-bottom:12px}
@@ -370,6 +431,17 @@ const indexHTML = `<!doctype html>
     article form{margin-top:8px}
     small{color:#555}
     pre{white-space:pre-wrap}
+`
+
+const indexHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>Potpuri</title>
+  <style>
+` + baseCSS + `
   </style>
 </head>
 <body>
@@ -378,27 +450,10 @@ const indexHTML = `<!doctype html>
       <h1>Potpuri</h1>
       <form method="post" action="/logout"><button>Log out</button></form>
     </header>
+    <a class="top-link" href="/add">Add to Potpuri</a>
     <form class="search" method="get" action="/">
       <input name="q" value="{{.Query}}" placeholder="Search">
       <button>Search</button>
-    </form>
-    <form method="post" action="/items" enctype="multipart/form-data">
-      <input name="title" placeholder="Title">
-      <div class="field">
-        <label for="source_url">URL</label>
-        <input id="source_url" name="source_url" placeholder="https://example.com">
-      </div>
-      <div class="field">
-        <label for="body">MD note</label>
-        <textarea id="body" name="body" rows="8" placeholder="Markdown note"></textarea>
-      </div>
-      <div class="field">
-        <label for="files">File upload</label>
-        <input id="files" name="files" type="file" multiple>
-      </div>
-      <input name="tags" placeholder="tags, comma separated">
-      <button>Add</button>
-      <button type="button" onclick="addClipboard()">Add clipboard</button>
     </form>
     {{range .Items}}
       <article>
@@ -416,11 +471,6 @@ const indexHTML = `<!doctype html>
     {{end}}
     <script>
       navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
-      async function addClipboard(){
-        const text = await navigator.clipboard.readText();
-        await fetch('/api/clipboard',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});
-        location.reload();
-      }
     </script>
   {{else}}
     <h2>Register</h2>
@@ -436,5 +486,67 @@ const indexHTML = `<!doctype html>
       <button>Log in</button>
     </form>
   {{end}}
+</body>
+</html>`
+
+const addHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>Add to Potpuri</title>
+  <style>
+` + baseCSS + `
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Potpuri</h1>
+    <form method="post" action="/logout"><button>Log out</button></form>
+  </header>
+  <a class="top-link" href="/">Back to items</a>
+  <form method="post" action="/items" enctype="multipart/form-data">
+    <input name="title" placeholder="Title">
+    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything"></textarea>
+    <input id="files" name="files" type="file" multiple>
+    <input name="source_url" placeholder="Optional source URL">
+    <input name="tags" placeholder="tags, comma separated">
+    <button>Add</button>
+    <button type="button" onclick="addClipboard()">Add clipboard</button>
+  </form>
+  <script>
+    navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
+    async function addClipboard(){
+      const form = new FormData();
+      let text = "";
+      if (navigator.clipboard && navigator.clipboard.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            for (const type of item.types) {
+              const blob = await item.getType(type);
+              if (type.startsWith("text/")) {
+                text += await blob.text();
+              } else {
+                const ext = type.includes("/") ? type.split("/")[1].replace(/[^a-z0-9.+-]/gi, "") : "bin";
+                form.append("files", new File([blob], "clipboard." + ext, {type}));
+              }
+            }
+          }
+        } catch (err) {}
+      }
+      if (!text && navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      form.append("body", text);
+      const response = await fetch("/api/clipboard", {method:"POST", body:form});
+      if (!response.ok) {
+        alert(await response.text());
+        return;
+      }
+      location.href = "/";
+    }
+  </script>
 </body>
 </html>`
