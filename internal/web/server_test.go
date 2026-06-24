@@ -207,6 +207,39 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	}
 }
 
+func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "actions@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Action item", Body: "edit me"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{`href="/items/edit?id=` + item.ID + `"`, `class="button ghost"`, `<button class="ghost">Delete</button>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home page missing item action %s: %s", want, body)
+		}
+	}
+}
+
 func TestRoseLogoIsServedAsSVG(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
@@ -284,6 +317,71 @@ func TestHTMLCreateCombinesURLNoteAndFileIntoOneEntry(t *testing.T) {
 		if !strings.Contains(items[0].Body+items[0].SourceURL, want) {
 			t.Fatalf("combined entry missing %q: %#v", want, items[0])
 		}
+	}
+}
+
+func TestAuthenticatedUserCanEditItemThroughHTML(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "edit@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Draft", Body: "old body", Tags: []string{"old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/items/edit?id="+item.ID, nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit form failed: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`value="Draft"`, `old body`, `value="old"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("edit form missing %s: %s", want, rec.Body.String())
+		}
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("id", item.ID)
+	_ = writer.WriteField("title", "Published")
+	_ = writer.WriteField("source_url", "https://example.com/edited")
+	_ = writer.WriteField("body", "new body")
+	_ = writer.WriteField("tags", "edited, notes")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/items/edit", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit failed: %d %s", rec.Code, rec.Body.String())
+	}
+	updated, err := svc.GetItem(context.Background(), user.ID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != "Published" || updated.Body != "new body" || updated.SourceURL != "https://example.com/edited" {
+		t.Fatalf("item was not updated: %#v", updated)
+	}
+	if strings.Join(updated.Tags, ",") != "edited,notes" {
+		t.Fatalf("tags were not updated: %#v", updated.Tags)
 	}
 }
 

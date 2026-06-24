@@ -156,6 +156,86 @@ func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain
 	return item, s.items.CreateItem(ctx, stored)
 }
 
+type UpdateItemInput struct {
+	ID        string
+	UserID    string
+	Type      domain.ItemType
+	Title     string
+	Body      string
+	SourceURL string
+	Tags      []string
+}
+
+func (s *Service) GetItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	if userID == "" {
+		return domain.Item{}, ErrUnauthorized
+	}
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return domain.Item{}, ErrNotFound
+	}
+	stored, err := s.items.FindItem(ctx, userID, itemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	items, err := s.decryptItems([]ports.StoredItem{stored})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	return items[0], nil
+}
+
+func (s *Service) UpdateItem(ctx context.Context, input UpdateItemInput) (domain.Item, error) {
+	if input.UserID == "" {
+		return domain.Item{}, ErrUnauthorized
+	}
+	input.ID = strings.TrimSpace(input.ID)
+	if input.ID == "" {
+		return domain.Item{}, ErrNotFound
+	}
+	existing, err := s.items.FindItem(ctx, input.UserID, input.ID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if input.Type == "" {
+		input.Type = domain.ItemTypeNote
+	}
+	title, err := s.cipher.SealString(strings.TrimSpace(input.Title))
+	if err != nil {
+		return domain.Item{}, err
+	}
+	body, err := s.cipher.SealString(input.Body)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	sourceURL, err := s.cipher.SealString(strings.TrimSpace(input.SourceURL))
+	if err != nil {
+		return domain.Item{}, err
+	}
+	item := domain.Item{
+		ID:        input.ID,
+		UserID:    input.UserID,
+		Type:      input.Type,
+		Title:     strings.TrimSpace(input.Title),
+		Body:      input.Body,
+		SourceURL: strings.TrimSpace(input.SourceURL),
+		Tags:      domain.NormalizeTags(input.Tags),
+		CreatedAt: existing.CreatedAt,
+	}
+	stored := ports.StoredItem{
+		ID:              item.ID,
+		UserID:          item.UserID,
+		Type:            item.Type,
+		TitleCiphertext: title,
+		BodyCiphertext:  body,
+		URLCiphertext:   sourceURL,
+		SearchTokens:    s.cipher.SearchTokens(item.Title, item.Body, item.SourceURL, strings.Join(item.Tags, " ")),
+		Tags:            item.Tags,
+		CreatedAt:       item.CreatedAt,
+	}
+	return item, s.items.UpdateItem(ctx, stored)
+}
+
 func (s *Service) ListItems(ctx context.Context, userID string) ([]domain.Item, error) {
 	if userID == "" {
 		return nil, ErrUnauthorized

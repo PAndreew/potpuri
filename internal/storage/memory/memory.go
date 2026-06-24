@@ -51,6 +51,29 @@ func (s *Store) CreateItem(ctx context.Context, item ports.StoredItem) error {
 	return nil
 }
 
+func (s *Store) FindItem(ctx context.Context, userID string, itemID string) (ports.StoredItem, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range s.items {
+		if item.UserID == userID && item.ID == itemID {
+			return cloneItem(item), nil
+		}
+	}
+	return ports.StoredItem{}, errors.New("item not found")
+}
+
+func (s *Store) UpdateItem(ctx context.Context, updated ports.StoredItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, item := range s.items {
+		if item.UserID == updated.UserID && item.ID == updated.ID {
+			s.items[i] = cloneItem(updated)
+			return nil
+		}
+	}
+	return errors.New("item not found")
+}
+
 func (s *Store) ListItems(ctx context.Context, userID string) ([]ports.StoredItem, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -58,6 +58,46 @@ values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 	return err
 }
 
+func (s *Store) FindItem(ctx context.Context, userID string, itemID string) (ports.StoredItem, error) {
+	row := s.db.QueryRowContext(ctx, `
+select id, user_id, type, title_ciphertext, body_ciphertext, url_ciphertext, search_tokens, tags, created_at
+from items where user_id = $1 and id = $2`, userID, itemID)
+	var item ports.StoredItem
+	var itemType string
+	if err := row.Scan(&item.ID, &item.UserID, &itemType, &item.TitleCiphertext, &item.BodyCiphertext, &item.URLCiphertext, pq.Array(&item.SearchTokens), pq.Array(&item.Tags), &item.CreatedAt); err != nil {
+		return ports.StoredItem{}, err
+	}
+	item.Type = domain.ItemType(itemType)
+	return item, nil
+}
+
+func (s *Store) UpdateItem(ctx context.Context, item ports.StoredItem) error {
+	if item.SearchTokens == nil {
+		item.SearchTokens = []string{}
+	}
+	if item.Tags == nil {
+		item.Tags = []string{}
+	}
+	result, err := s.db.ExecContext(ctx, `
+update items
+set type = $3,
+    title_ciphertext = $4,
+    body_ciphertext = $5,
+    url_ciphertext = $6,
+    search_tokens = $7,
+    tags = $8
+where user_id = $1 and id = $2`,
+		item.UserID, item.ID, string(item.Type), item.TitleCiphertext, item.BodyCiphertext, item.URLCiphertext, pq.Array(item.SearchTokens), pq.Array(item.Tags))
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("item not found")
+	}
+	return nil
+}
+
 func (s *Store) ListItems(ctx context.Context, userID string) ([]ports.StoredItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 select id, user_id, type, title_ciphertext, body_ciphertext, url_ciphertext, search_tokens, tags, created_at

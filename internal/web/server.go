@@ -18,16 +18,18 @@ import (
 var roseSVG []byte
 
 type Server struct {
-	svc    *usecase.Service
-	index  *template.Template
-	addTpl *template.Template
+	svc     *usecase.Service
+	index   *template.Template
+	addTpl  *template.Template
+	editTpl *template.Template
 }
 
 func NewServer(svc *usecase.Service) *Server {
 	return &Server{
-		svc:    svc,
-		index:  template.Must(template.New("index").Parse(indexHTML)),
-		addTpl: template.Must(template.New("add").Parse(addHTML)),
+		svc:     svc,
+		index:   template.Must(template.New("index").Parse(indexHTML)),
+		addTpl:  template.Must(template.New("add").Parse(addHTML)),
+		editTpl: template.Must(template.New("edit").Funcs(template.FuncMap{"joinTags": joinTags}).Parse(editHTML)),
 	}
 }
 
@@ -40,6 +42,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/items", s.createItemHTML)
+	mux.HandleFunc("/items/edit", s.editItemHTML)
 	mux.HandleFunc("/items/delete", s.deleteItemHTML)
 	mux.HandleFunc("/api/items", s.itemsAPI)
 	mux.HandleFunc("/api/clipboard", s.clipboardAPI)
@@ -142,6 +145,45 @@ func (s *Server) createItemHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) editItemHTML(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		item, err := s.svc.GetItem(r.Context(), userID, r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		_ = s.editTpl.Execute(w, map[string]any{"UserID": userID, "Item": item})
+	case http.MethodPost:
+		input, err := itemInputFromRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_, err = s.svc.UpdateItem(r.Context(), usecase.UpdateItemInput{
+			ID:        r.FormValue("id"),
+			UserID:    userID,
+			Type:      input.Type,
+			Title:     input.Title,
+			Body:      input.Body,
+			SourceURL: input.SourceURL,
+			Tags:      input.Tags,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) deleteItemHTML(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +307,10 @@ func splitCSV(raw string) []string {
 		return nil
 	}
 	return strings.Split(raw, ",")
+}
+
+func joinTags(tags []string) string {
+	return strings.Join(tags, ", ")
 }
 
 func itemInputFromClipboardText(text, title, sourceURL string) usecase.CreateItemInput {
@@ -441,8 +487,11 @@ func roseLogo(w http.ResponseWriter, r *http.Request) {
 const baseCSS = `
     body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.45}
     body{overflow-wrap:anywhere}
-    input,textarea,button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
-    button{width:auto}
+    input,textarea,button,.button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
+    button,.button{width:auto;border:1px solid #111;border-radius:999px;background:#111;color:#fff;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;line-height:1.2}
+    .button.ghost,button.ghost{background:transparent;color:#111;border-color:#bbb}
+    .actions{display:flex;gap:8px;align-items:center;margin-top:8px}
+    .actions form{margin:0}
     a{color:#0645ad}
     header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
     header h1{font-size:1.5rem;margin:0}
@@ -456,7 +505,6 @@ const baseCSS = `
     label{display:block;font-size:.9rem;color:#333}
     article{border-top:1px solid #ddd;padding:16px 0}
     article h2{margin-bottom:4px}
-    article form{margin-top:8px}
     small{color:#555}
     pre{white-space:pre-wrap;overflow-wrap:anywhere}
 `
@@ -490,10 +538,13 @@ const indexHTML = `<!doctype html>
         <small>{{.Type}} · {{.CreatedAt}} · {{range .Tags}}#{{.}} {{end}}</small>
         {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
         <pre>{{.Body}}</pre>
-        <form method="post" action="/items/delete">
+        <div class="actions">
+          <a class="button ghost" href="/items/edit?id={{.ID}}">Edit</a>
+          <form method="post" action="/items/delete">
           <input type="hidden" name="id" value="{{.ID}}">
-          <button>Delete</button>
-        </form>
+            <button class="ghost">Delete</button>
+          </form>
+        </div>
       </article>
     {{else}}
       <p>No entries yet.</p>
@@ -542,7 +593,40 @@ const addHTML = `<!doctype html>
     <input id="files" name="files" type="file" multiple>
     <input name="source_url" placeholder="Optional source URL">
     <input name="tags" placeholder="tags, comma separated">
-    <button>Add</button>
+    <button class="add-button">Add</button>
+  </form>
+  <script>
+    navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
+  </script>
+</body>
+</html>`
+
+const editHTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
+  <title>Edit {{.Item.Title}} - Potpuri</title>
+  <style>
+` + baseCSS + `
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
+    <form method="post" action="/logout"><button>Log out</button></form>
+  </header>
+  <a class="top-link" href="/">Back to items</a>
+  <form method="post" action="/items/edit" enctype="multipart/form-data">
+    <input type="hidden" name="id" value="{{.Item.ID}}">
+    <input name="title" placeholder="Title" value="{{.Item.Title}}">
+    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything">{{.Item.Body}}</textarea>
+    <input id="files" name="files" type="file" multiple>
+    <input name="source_url" placeholder="Optional source URL" value="{{.Item.SourceURL}}">
+    <input name="tags" placeholder="tags, comma separated" value="{{joinTags .Item.Tags}}">
+    <button>Save changes</button>
   </form>
   <script>
     navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');

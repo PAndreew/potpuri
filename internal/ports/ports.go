@@ -14,6 +14,8 @@ type UserRepository interface {
 
 type ItemRepository interface {
 	CreateItem(ctx context.Context, item StoredItem) error
+	FindItem(ctx context.Context, userID string, itemID string) (StoredItem, error)
+	UpdateItem(ctx context.Context, item StoredItem) error
 	ListItems(ctx context.Context, userID string) ([]StoredItem, error)
 	SearchItems(ctx context.Context, userID string, tokens []string) ([]StoredItem, error)
 	DeleteItem(ctx context.Context, userID string, itemID string) error
