@@ -167,6 +167,9 @@ func TestAddPageHasClipboardStatusAndFallbackInputs(t *testing.T) {
 	if !strings.Contains(body, "Nothing to add") || !strings.Contains(body, "Clipboard read timed out") || !strings.Contains(body, "Promise.race") {
 		t.Fatalf("add page missing clipboard feedback copy: %s", body)
 	}
+	if strings.Contains(body, "navigator.clipboard.read)") || strings.Contains(body, "item.types") {
+		t.Fatalf("clipboard button should not inspect file clipboard data: %s", body)
+	}
 }
 
 func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
