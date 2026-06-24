@@ -165,13 +165,21 @@ func (s *Server) editItemHTML(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		_ = s.editTpl.Execute(w, map[string]any{"UserID": userID, "Item": item})
+		editableBody, _ := splitUploadedFiles(item.Body)
+		_ = s.editTpl.Execute(w, map[string]any{"UserID": userID, "Item": item, "EditableBody": editableBody})
 	case http.MethodPost:
 		input, err := itemInputFromRequest(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		existing, err := s.svc.GetItem(r.Context(), userID, r.FormValue("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		_, existingUploads := splitUploadedFiles(existing.Body)
+		input.Body = appendUploadedFiles(input.Body, existingUploads)
 		_, err = s.svc.UpdateItem(r.Context(), usecase.UpdateItemInput{
 			ID:        r.FormValue("id"),
 			UserID:    userID,
@@ -426,6 +434,27 @@ func uploadedFilesBody(r *http.Request) (string, string, error) {
 		))
 	}
 	return strings.TrimSpace(out.String()), firstFilename, nil
+}
+
+func splitUploadedFiles(body string) (string, string) {
+	const marker = "\n\n## Uploaded files\n\n"
+	index := strings.Index(body, marker)
+	if index < 0 {
+		return body, ""
+	}
+	return strings.TrimRight(body[:index], "\n"), strings.TrimSpace(body[index:])
+}
+
+func appendUploadedFiles(body, uploads string) string {
+	uploads = strings.TrimSpace(uploads)
+	if uploads == "" {
+		return body
+	}
+	body = strings.TrimRight(body, "\n")
+	if body == "" {
+		return uploads
+	}
+	return body + "\n\n" + uploads
 }
 
 func inferredType(sourceURL, firstFilename string) domain.ItemType {
@@ -742,7 +771,7 @@ const editHTML = `<!doctype html>
   <form method="post" action="/items/edit" enctype="multipart/form-data">
     <input type="hidden" name="id" value="{{.Item.ID}}">
     <input name="title" placeholder="Title" value="{{.Item.Title}}">
-    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything">{{.Item.Body}}</textarea>
+    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything">{{.EditableBody}}</textarea>
     <input id="files" name="files" type="file" multiple>
     <input name="source_url" placeholder="Optional source URL" value="{{.Item.SourceURL}}">
     <input name="tags" placeholder="tags, comma separated" value="{{joinTags .Item.Tags}}">

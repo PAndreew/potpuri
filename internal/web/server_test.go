@@ -497,6 +497,69 @@ func TestAuthenticatedUserCanEditItemThroughHTML(t *testing.T) {
 	}
 }
 
+func TestEditPageKeepsUploadedImagesOutOfTextareaAndPreservesThemOnSave(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "edit-image@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	itemBody := "caption\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
+	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: itemBody})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/items/edit?id="+item.ID, nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit form failed: %d %s", rec.Code, rec.Body.String())
+	}
+	editPage := rec.Body.String()
+	if !strings.Contains(editPage, `<textarea id="body" name="body" rows="10" placeholder="Paste or write anything">caption</textarea>`) {
+		t.Fatalf("edit textarea should contain only editable text: %s", editPage)
+	}
+	if strings.Contains(editPage, "```base64") {
+		t.Fatalf("edit page should not expose uploaded image base64: %s", editPage)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("id", item.ID)
+	_ = writer.WriteField("title", "Photo")
+	_ = writer.WriteField("body", "updated caption")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/items/edit", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit failed: %d %s", rec.Code, rec.Body.String())
+	}
+	updated, err := svc.GetItem(context.Background(), user.ID, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Body, "updated caption") || !strings.Contains(updated.Body, "AQID") {
+		t.Fatalf("edit should preserve text changes and uploaded image: %#v", updated.Body)
+	}
+}
+
 func TestAuthenticatedUserCanDeleteItemThroughHTML(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
