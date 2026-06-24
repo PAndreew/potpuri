@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Add to Potpuri",
+  "version": "0.1.0",
+  "permissions": ["contextMenus", "activeTab", "clipboardRead", "storage"],
+  "host_permissions": ["http://localhost:8080/*", "https://*/api/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Add to Potpuri"
+  }
+}
