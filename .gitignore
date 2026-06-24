@@ -7,3 +7,5 @@ tmp/
 coverage/
 dist/
 node_modules/
+CHECKPOINT.md
+scripts/deploy-vps.sh
