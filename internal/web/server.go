@@ -509,8 +509,9 @@ const baseCSS = `
     .intro .button{min-width:112px}
     .auth-page{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center}
     .auth-form{width:100%;max-width:360px}
+    .auth-logo{display:block;width:64px;height:64px;margin:0 auto 16px}
     .auth-form h1{text-align:center;font-size:2rem;margin:0 0 20px}
-    .auth-actions{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:4px}
+    .auth-actions{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;margin-top:4px}
     .auth-actions button{margin:0}
     .signup-link{color:#0645ad}
     header form{margin:0}
@@ -596,6 +597,7 @@ const loginHTML = `<!doctype html>
 <body>
   <main class="auth-page">
     <form class="auth-form" method="post" action="/login">
+      <img class="auth-logo" src="/static/rose.svg" alt="">
       <h1>Sign in</h1>
       <input name="email" type="email" placeholder="Email">
       <input name="password" type="password" placeholder="Password">
@@ -623,6 +625,7 @@ const registerHTML = `<!doctype html>
 <body>
   <main class="auth-page">
     <form class="auth-form" method="post" action="/register">
+      <img class="auth-logo" src="/static/rose.svg" alt="">
       <h1>Sign up</h1>
       <input name="email" type="email" placeholder="Email">
       <input name="password" type="password" placeholder="Password">

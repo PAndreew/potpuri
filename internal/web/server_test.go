@@ -251,7 +251,7 @@ func TestLoginPageShowsCenteredSignInFormWithSignUpLink(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`<title>Sign in - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `action="/login"`, `type="email"`, `type="password"`, `<button>Sign in</button>`, `class="signup-link" href="/register">Sign up</a>`} {
+	for _, want := range []string{`<title>Sign in - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `class="auth-logo" src="/static/rose.svg"`, `flex-direction:column`, `action="/login"`, `type="email"`, `type="password"`, `<button>Sign in</button>`, `class="signup-link" href="/register">Sign up</a>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("login page missing %s: %s", want, body)
 		}
@@ -274,7 +274,7 @@ func TestRegisterPageShowsCenteredSignUpForm(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/register", nil)
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`<title>Sign up - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `action="/register"`, `type="email"`, `type="password"`, `<button>Sign up</button>`} {
+	for _, want := range []string{`<title>Sign up - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `class="auth-logo" src="/static/rose.svg"`, `action="/register"`, `type="email"`, `type="password"`, `<button>Sign up</button>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("register page missing %s: %s", want, body)
 		}
