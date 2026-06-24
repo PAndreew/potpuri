@@ -14,6 +14,7 @@ type Store struct {
 	mu       sync.Mutex
 	users    map[string]domain.User
 	items    []ports.StoredItem
+	blobs    []ports.StoredBlob
 	sessions map[string]ports.Session
 }
 
@@ -120,10 +121,62 @@ func (s *Store) DeleteItem(ctx context.Context, userID string, itemID string) er
 	for i, item := range s.items {
 		if item.UserID == userID && item.ID == itemID {
 			s.items = append(s.items[:i], s.items[i+1:]...)
+			s.deleteBlobsForItemLocked(userID, itemID)
 			return nil
 		}
 	}
 	return errors.New("item not found")
+}
+
+func (s *Store) CreateBlob(ctx context.Context, blob ports.StoredBlob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.blobs = append(s.blobs, cloneBlob(blob))
+	return nil
+}
+
+func (s *Store) FindBlob(ctx context.Context, userID string, blobID string) (ports.StoredBlob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, blob := range s.blobs {
+		if blob.UserID == userID && blob.ID == blobID {
+			return cloneBlob(blob), nil
+		}
+	}
+	return ports.StoredBlob{}, errors.New("blob not found")
+}
+
+func (s *Store) ListBlobs(ctx context.Context, userID string, itemID string) ([]ports.StoredBlob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.StoredBlob
+	for _, blob := range s.blobs {
+		if blob.UserID == userID && blob.ItemID == itemID {
+			out = append(out, cloneBlob(blob))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
+func (s *Store) DeleteBlobsForItem(ctx context.Context, userID string, itemID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteBlobsForItemLocked(userID, itemID)
+	return nil
+}
+
+func (s *Store) deleteBlobsForItemLocked(userID string, itemID string) {
+	var kept []ports.StoredBlob
+	for _, blob := range s.blobs {
+		if blob.UserID == userID && blob.ItemID == itemID {
+			continue
+		}
+		kept = append(kept, blob)
+	}
+	s.blobs = kept
 }
 
 func (s *Store) CreateSession(ctx context.Context, session ports.Session) error {
@@ -157,4 +210,9 @@ func cloneItem(item ports.StoredItem) ports.StoredItem {
 	item.SearchTokens = append([]string(nil), item.SearchTokens...)
 	item.Tags = append([]string(nil), item.Tags...)
 	return item
+}
+
+func cloneBlob(blob ports.StoredBlob) ports.StoredBlob {
+	blob.Ciphertext = append([]byte(nil), blob.Ciphertext...)
+	return blob
 }

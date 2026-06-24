@@ -21,6 +21,13 @@ type ItemRepository interface {
 	DeleteItem(ctx context.Context, userID string, itemID string) error
 }
 
+type BlobRepository interface {
+	CreateBlob(ctx context.Context, blob StoredBlob) error
+	FindBlob(ctx context.Context, userID string, blobID string) (StoredBlob, error)
+	ListBlobs(ctx context.Context, userID string, itemID string) ([]StoredBlob, error)
+	DeleteBlobsForItem(ctx context.Context, userID string, itemID string) error
+}
+
 type SessionRepository interface {
 	CreateSession(ctx context.Context, session Session) error
 	FindSession(ctx context.Context, tokenHash string) (Session, error)
@@ -39,6 +46,17 @@ type StoredItem struct {
 	CreatedAt       time.Time
 }
 
+type StoredBlob struct {
+	ID          string
+	UserID      string
+	ItemID      string
+	Filename    string
+	ContentType string
+	Size        int64
+	Ciphertext  []byte
+	CreatedAt   time.Time
+}
+
 type Session struct {
 	TokenHash string
 	UserID    string
@@ -48,6 +66,8 @@ type Session struct {
 type ItemCipher interface {
 	SealString(plaintext string) ([]byte, error)
 	OpenString(ciphertext []byte) (string, error)
+	SealBytes(plaintext []byte) ([]byte, error)
+	OpenBytes(ciphertext []byte) ([]byte, error)
 	SearchTokens(parts ...string) []string
 }
 

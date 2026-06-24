@@ -43,24 +43,36 @@ func NewCipherFromBase64(secret string) (*Cipher, error) {
 }
 
 func (c *Cipher) SealString(plaintext string) ([]byte, error) {
+	return c.SealBytes([]byte(plaintext))
+}
+
+func (c *Cipher) OpenString(ciphertext []byte) (string, error) {
+	plaintext, err := c.OpenBytes(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+func (c *Cipher) SealBytes(plaintext []byte) ([]byte, error) {
 	nonce := make([]byte, c.gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
-	return c.gcm.Seal(nonce, nonce, []byte(plaintext), nil), nil
+	return c.gcm.Seal(nonce, nonce, plaintext, nil), nil
 }
 
-func (c *Cipher) OpenString(ciphertext []byte) (string, error) {
+func (c *Cipher) OpenBytes(ciphertext []byte) ([]byte, error) {
 	if len(ciphertext) < c.gcm.NonceSize() {
-		return "", fmt.Errorf("ciphertext too short")
+		return nil, fmt.Errorf("ciphertext too short")
 	}
 	nonce := ciphertext[:c.gcm.NonceSize()]
 	body := ciphertext[c.gcm.NonceSize():]
 	plaintext, err := c.gcm.Open(nil, nonce, body, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(plaintext), nil
+	return plaintext, nil
 }
 
 var wordRE = regexp.MustCompile(`[a-z0-9]+`)

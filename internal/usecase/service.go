@@ -23,6 +23,7 @@ var (
 type Service struct {
 	users    ports.UserRepository
 	items    ports.ItemRepository
+	blobs    ports.BlobRepository
 	sessions ports.SessionRepository
 	cipher   ports.ItemCipher
 	hasher   ports.PasswordHasher
@@ -32,6 +33,7 @@ type Service struct {
 type NewServiceParams struct {
 	Users    ports.UserRepository
 	Items    ports.ItemRepository
+	Blobs    ports.BlobRepository
 	Sessions ports.SessionRepository
 	Cipher   ports.ItemCipher
 	Hasher   ports.PasswordHasher
@@ -43,9 +45,16 @@ func NewService(params NewServiceParams) *Service {
 	if now == nil {
 		now = time.Now
 	}
+	blobs := params.Blobs
+	if blobs == nil {
+		if repo, ok := params.Items.(ports.BlobRepository); ok {
+			blobs = repo
+		}
+	}
 	return &Service{
 		users:    params.Users,
 		items:    params.Items,
+		blobs:    blobs,
 		sessions: params.Sessions,
 		cipher:   params.Cipher,
 		hasher:   params.Hasher,
@@ -111,6 +120,13 @@ type CreateItemInput struct {
 	Body      string
 	SourceURL string
 	Tags      []string
+	Blobs     []BlobInput
+}
+
+type BlobInput struct {
+	Filename    string
+	ContentType string
+	Content     []byte
 }
 
 func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain.Item, error) {
@@ -149,11 +165,17 @@ func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain
 		TitleCiphertext: title,
 		BodyCiphertext:  body,
 		URLCiphertext:   sourceURL,
-		SearchTokens:    s.cipher.SearchTokens(item.Title, item.Body, item.SourceURL, strings.Join(item.Tags, " ")),
+		SearchTokens:    s.cipher.SearchTokens(item.Title, item.Body, item.SourceURL, strings.Join(item.Tags, " "), blobSearchText(input.Blobs)),
 		Tags:            item.Tags,
 		CreatedAt:       item.CreatedAt,
 	}
-	return item, s.items.CreateItem(ctx, stored)
+	if err := s.items.CreateItem(ctx, stored); err != nil {
+		return domain.Item{}, err
+	}
+	if err := s.createBlobs(ctx, item, input.Blobs); err != nil {
+		return domain.Item{}, err
+	}
+	return s.GetItem(ctx, item.UserID, item.ID)
 }
 
 type UpdateItemInput struct {
@@ -164,6 +186,7 @@ type UpdateItemInput struct {
 	Body      string
 	SourceURL string
 	Tags      []string
+	Blobs     []BlobInput
 }
 
 func (s *Service) GetItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
@@ -178,7 +201,7 @@ func (s *Service) GetItem(ctx context.Context, userID, itemID string) (domain.It
 	if err != nil {
 		return domain.Item{}, err
 	}
-	items, err := s.decryptItems([]ports.StoredItem{stored})
+	items, err := s.decryptItems(ctx, []ports.StoredItem{stored})
 	if err != nil {
 		return domain.Item{}, err
 	}
@@ -196,6 +219,14 @@ func (s *Service) UpdateItem(ctx context.Context, input UpdateItemInput) (domain
 	existing, err := s.items.FindItem(ctx, input.UserID, input.ID)
 	if err != nil {
 		return domain.Item{}, err
+	}
+	existingBlobSearchText := ""
+	if s.blobs != nil {
+		blobs, err := s.blobs.ListBlobs(ctx, input.UserID, input.ID)
+		if err != nil {
+			return domain.Item{}, err
+		}
+		existingBlobSearchText = storedBlobSearchText(blobs)
 	}
 	if input.Type == "" {
 		input.Type = domain.ItemTypeNote
@@ -229,11 +260,88 @@ func (s *Service) UpdateItem(ctx context.Context, input UpdateItemInput) (domain
 		TitleCiphertext: title,
 		BodyCiphertext:  body,
 		URLCiphertext:   sourceURL,
-		SearchTokens:    s.cipher.SearchTokens(item.Title, item.Body, item.SourceURL, strings.Join(item.Tags, " ")),
+		SearchTokens:    s.cipher.SearchTokens(item.Title, item.Body, item.SourceURL, strings.Join(item.Tags, " "), existingBlobSearchText, blobSearchText(input.Blobs)),
 		Tags:            item.Tags,
 		CreatedAt:       item.CreatedAt,
 	}
-	return item, s.items.UpdateItem(ctx, stored)
+	if err := s.items.UpdateItem(ctx, stored); err != nil {
+		return domain.Item{}, err
+	}
+	if err := s.createBlobs(ctx, item, input.Blobs); err != nil {
+		return domain.Item{}, err
+	}
+	return s.GetItem(ctx, item.UserID, item.ID)
+}
+
+func (s *Service) GetBlob(ctx context.Context, userID, blobID string) (domain.Blob, []byte, error) {
+	if userID == "" {
+		return domain.Blob{}, nil, ErrUnauthorized
+	}
+	stored, err := s.blobs.FindBlob(ctx, userID, strings.TrimSpace(blobID))
+	if err != nil {
+		return domain.Blob{}, nil, err
+	}
+	content, err := s.cipher.OpenBytes(stored.Ciphertext)
+	if err != nil {
+		return domain.Blob{}, nil, err
+	}
+	return domain.Blob{
+		ID:          stored.ID,
+		UserID:      stored.UserID,
+		ItemID:      stored.ItemID,
+		Filename:    stored.Filename,
+		ContentType: stored.ContentType,
+		Size:        stored.Size,
+		CreatedAt:   stored.CreatedAt,
+	}, content, nil
+}
+
+func (s *Service) createBlobs(ctx context.Context, item domain.Item, inputs []BlobInput) error {
+	if s.blobs == nil {
+		return nil
+	}
+	for _, input := range inputs {
+		if len(input.Content) == 0 {
+			continue
+		}
+		ciphertext, err := s.cipher.SealBytes(input.Content)
+		if err != nil {
+			return err
+		}
+		contentType := strings.TrimSpace(input.ContentType)
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		if err := s.blobs.CreateBlob(ctx, ports.StoredBlob{
+			ID:          newID("blb"),
+			UserID:      item.UserID,
+			ItemID:      item.ID,
+			Filename:    strings.TrimSpace(input.Filename),
+			ContentType: contentType,
+			Size:        int64(len(input.Content)),
+			Ciphertext:  ciphertext,
+			CreatedAt:   item.CreatedAt,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func blobSearchText(blobs []BlobInput) string {
+	var parts []string
+	for _, blob := range blobs {
+		parts = append(parts, blob.Filename, blob.ContentType)
+	}
+	return strings.Join(parts, " ")
+}
+
+func storedBlobSearchText(blobs []ports.StoredBlob) string {
+	var parts []string
+	for _, blob := range blobs {
+		parts = append(parts, blob.Filename, blob.ContentType)
+	}
+	return strings.Join(parts, " ")
 }
 
 func (s *Service) ListItems(ctx context.Context, userID string) ([]domain.Item, error) {
@@ -244,7 +352,7 @@ func (s *Service) ListItems(ctx context.Context, userID string) ([]domain.Item, 
 	if err != nil {
 		return nil, err
 	}
-	return s.decryptItems(stored)
+	return s.decryptItems(ctx, stored)
 }
 
 func (s *Service) SearchItems(ctx context.Context, userID, query string) ([]domain.Item, error) {
@@ -259,7 +367,7 @@ func (s *Service) SearchItems(ctx context.Context, userID, query string) ([]doma
 	if err != nil {
 		return nil, err
 	}
-	return s.decryptItems(stored)
+	return s.decryptItems(ctx, stored)
 }
 
 func (s *Service) DeleteItem(ctx context.Context, userID, itemID string) error {
@@ -273,7 +381,7 @@ func (s *Service) DeleteItem(ctx context.Context, userID, itemID string) error {
 	return s.items.DeleteItem(ctx, userID, itemID)
 }
 
-func (s *Service) decryptItems(stored []ports.StoredItem) ([]domain.Item, error) {
+func (s *Service) decryptItems(ctx context.Context, stored []ports.StoredItem) ([]domain.Item, error) {
 	items := make([]domain.Item, 0, len(stored))
 	for _, storedItem := range stored {
 		title, err := s.cipher.OpenString(storedItem.TitleCiphertext)
@@ -288,7 +396,7 @@ func (s *Service) decryptItems(stored []ports.StoredItem) ([]domain.Item, error)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, domain.Item{
+		item := domain.Item{
 			ID:        storedItem.ID,
 			UserID:    storedItem.UserID,
 			Type:      storedItem.Type,
@@ -297,7 +405,25 @@ func (s *Service) decryptItems(stored []ports.StoredItem) ([]domain.Item, error)
 			SourceURL: sourceURL,
 			Tags:      storedItem.Tags,
 			CreatedAt: storedItem.CreatedAt,
-		})
+		}
+		if s.blobs != nil {
+			blobs, err := s.blobs.ListBlobs(ctx, storedItem.UserID, storedItem.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, blob := range blobs {
+				item.Blobs = append(item.Blobs, domain.Blob{
+					ID:          blob.ID,
+					UserID:      blob.UserID,
+					ItemID:      blob.ItemID,
+					Filename:    blob.Filename,
+					ContentType: blob.ContentType,
+					Size:        blob.Size,
+					CreatedAt:   blob.CreatedAt,
+				})
+			}
+		}
+		items = append(items, item)
 	}
 	return items, nil
 }

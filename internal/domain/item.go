@@ -22,7 +22,18 @@ type Item struct {
 	Body      string
 	SourceURL string
 	Tags      []string
+	Blobs     []Blob
 	CreatedAt time.Time
+}
+
+type Blob struct {
+	ID          string
+	UserID      string
+	ItemID      string
+	Filename    string
+	ContentType string
+	Size        int64
+	CreatedAt   time.Time
 }
 
 func NormalizeTags(tags []string) []string {

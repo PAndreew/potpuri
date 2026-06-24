@@ -135,6 +135,47 @@ func (s *Store) DeleteItem(ctx context.Context, userID string, itemID string) er
 	return nil
 }
 
+func (s *Store) CreateBlob(ctx context.Context, blob ports.StoredBlob) error {
+	_, err := s.db.ExecContext(ctx, `
+insert into blobs (id, user_id, item_id, filename, content_type, size_bytes, ciphertext, created_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		blob.ID, blob.UserID, blob.ItemID, blob.Filename, blob.ContentType, blob.Size, blob.Ciphertext, blob.CreatedAt)
+	return err
+}
+
+func (s *Store) FindBlob(ctx context.Context, userID string, blobID string) (ports.StoredBlob, error) {
+	var blob ports.StoredBlob
+	err := s.db.QueryRowContext(ctx, `
+select id, user_id, item_id, filename, content_type, size_bytes, ciphertext, created_at
+from blobs where user_id = $1 and id = $2`, userID, blobID).
+		Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &blob.Ciphertext, &blob.CreatedAt)
+	return blob, err
+}
+
+func (s *Store) ListBlobs(ctx context.Context, userID string, itemID string) ([]ports.StoredBlob, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select id, user_id, item_id, filename, content_type, size_bytes, ciphertext, created_at
+from blobs where user_id = $1 and item_id = $2 order by created_at asc`, userID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var blobs []ports.StoredBlob
+	for rows.Next() {
+		var blob ports.StoredBlob
+		if err := rows.Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &blob.Ciphertext, &blob.CreatedAt); err != nil {
+			return nil, err
+		}
+		blobs = append(blobs, blob)
+	}
+	return blobs, rows.Err()
+}
+
+func (s *Store) DeleteBlobsForItem(ctx context.Context, userID string, itemID string) error {
+	_, err := s.db.ExecContext(ctx, `delete from blobs where user_id = $1 and item_id = $2`, userID, itemID)
+	return err
+}
+
 func (s *Store) CreateSession(ctx context.Context, session ports.Session) error {
 	_, err := s.db.ExecContext(ctx, `insert into sessions (token_hash, user_id, expires_at) values ($1, $2, $3)`, session.TokenHash, session.UserID, session.ExpiresAt)
 	return err
@@ -195,6 +236,19 @@ create table if not exists items (
 create index if not exists items_user_created_idx on items (user_id, created_at desc);
 create index if not exists items_search_tokens_idx on items using gin (search_tokens);
 create index if not exists items_tags_idx on items using gin (tags);
+
+create table if not exists blobs (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  item_id text not null references items(id) on delete cascade,
+  filename text not null,
+  content_type text not null,
+  size_bytes bigint not null,
+  ciphertext bytea not null,
+  created_at timestamptz not null
+);
+
+create index if not exists blobs_user_item_idx on blobs (user_id, item_id);
 
 create table if not exists sessions (
   token_hash text primary key,

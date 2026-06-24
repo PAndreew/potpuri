@@ -55,6 +55,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 	svc := usecase.NewService(usecase.NewServiceParams{
 		Users:    store,
 		Items:    store,
+		Blobs:    store,
 		Sessions: store,
 		Cipher:   cipher,
 		Hasher:   security.NewPasswordHasher(),

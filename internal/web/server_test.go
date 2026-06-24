@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 
@@ -405,6 +406,79 @@ func TestHomeRendersUploadedImageBlocksAsRoundedImages(t *testing.T) {
 	}
 }
 
+func TestHomeRendersBlobBackedImageUploads(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "blob-image@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("title", "Photo")
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", `form-data; name="files"; filename="photo.png"`)
+	header.Set("Content-Type", "image/png")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte{1, 2, 3})
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/items", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(items[0].Blobs) != 1 {
+		t.Fatalf("expected one item with one blob, got %#v", items)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	page := rec.Body.String()
+	if !strings.Contains(page, `class="uploaded-image"`) || !strings.Contains(page, `/items/blob?id=`+items[0].Blobs[0].ID) || strings.Contains(page, "```base64") {
+		t.Fatalf("home page did not render blob-backed image: %s", page)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/items/blob?id="+items[0].Blobs[0].ID, nil)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("blob route should require auth, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/items/blob?id="+items[0].Blobs[0].ID, nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != string([]byte{1, 2, 3}) {
+		t.Fatalf("blob route did not return content: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestRoseLogoIsServedAsSVG(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
@@ -478,10 +552,47 @@ func TestHTMLCreateCombinesURLNoteAndFileIntoOneEntry(t *testing.T) {
 	if items[0].Type != "file" {
 		t.Fatalf("expected file item type, got %s", items[0].Type)
 	}
-	for _, want := range []string{"https://example.com/page", "# Markdown note", "receipt.txt", "ZmlsZSBjb250ZW50cw=="} {
+	for _, want := range []string{"https://example.com/page", "# Markdown note"} {
 		if !strings.Contains(items[0].Body+items[0].SourceURL, want) {
 			t.Fatalf("combined entry missing %q: %#v", want, items[0])
 		}
+	}
+	if strings.Contains(items[0].Body, "ZmlsZSBjb250ZW50cw==") {
+		t.Fatalf("uploaded file should not be inlined as base64: %#v", items[0])
+	}
+	if len(items[0].Blobs) != 1 || items[0].Blobs[0].Filename != "receipt.txt" {
+		t.Fatalf("expected uploaded file blob metadata, got %#v", items[0].Blobs)
+	}
+	blob, content, err := svc.GetBlob(context.Background(), user.ID, items[0].Blobs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blob.Filename != "receipt.txt" || string(content) != "file contents" {
+		t.Fatalf("uploaded blob was not retrievable: %#v %q", blob, string(content))
+	}
+
+	var editBody bytes.Buffer
+	editWriter := multipart.NewWriter(&editBody)
+	_ = editWriter.WriteField("id", items[0].ID)
+	_ = editWriter.WriteField("title", "Updated capture")
+	_ = editWriter.WriteField("body", "updated note")
+	if err := editWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/items/edit", &editBody)
+	req.Header.Set("Content-Type", editWriter.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, err = svc.SearchItems(context.Background(), user.ID, "receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Type != "file" || len(items[0].Blobs) != 1 {
+		t.Fatalf("edit should preserve file type, blob metadata, and filename search: %#v", items)
 	}
 }
 

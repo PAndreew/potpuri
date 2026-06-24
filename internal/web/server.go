@@ -39,8 +39,12 @@ func NewServer(svc *usecase.Service) *Server {
 
 func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 	return &Server{
-		svc:         svc,
-		index:       template.Must(template.New("index").Funcs(template.FuncMap{"renderBody": renderBody}).Parse(indexHTML)),
+		svc: svc,
+		index: template.Must(template.New("index").Funcs(template.FuncMap{
+			"renderBody":  renderBody,
+			"isImageBlob": isImageBlob,
+			"blobURL":     blobURL,
+		}).Parse(indexHTML)),
 		loginTpl:    template.Must(template.New("login").Parse(loginHTML)),
 		registerTpl: template.Must(template.New("register").Parse(registerHTML)),
 		addTpl:      template.Must(template.New("add").Parse(addHTML)),
@@ -60,6 +64,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/items", s.createItemHTML)
 	mux.HandleFunc("/items/edit", s.editItemHTML)
 	mux.HandleFunc("/items/delete", s.deleteItemHTML)
+	mux.HandleFunc("/items/blob", s.blobHTML)
 	mux.HandleFunc("/api/items", s.itemsAPI)
 	mux.HandleFunc("/api/clipboard", s.clipboardAPI)
 	mux.HandleFunc("/manifest.webmanifest", manifest)
@@ -193,6 +198,9 @@ func (s *Server) editItemHTML(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
+		if len(input.Blobs) == 0 {
+			input.Type = existing.Type
+		}
 		_, existingUploads := splitUploadedFiles(existing.Body)
 		input.Body = appendUploadedFiles(input.Body, existingUploads)
 		_, err = s.svc.UpdateItem(r.Context(), usecase.UpdateItemInput{
@@ -203,6 +211,7 @@ func (s *Server) editItemHTML(w http.ResponseWriter, r *http.Request) {
 			Body:      input.Body,
 			SourceURL: input.SourceURL,
 			Tags:      input.Tags,
+			Blobs:     input.Blobs,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
@@ -229,6 +238,22 @@ func (s *Server) deleteItemHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) blobHTML(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	blob, content, err := s.svc.GetBlob(r.Context(), userID, r.URL.Query().Get("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", blob.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(content)
 }
 
 func (s *Server) itemsAPI(w http.ResponseWriter, r *http.Request) {
@@ -380,15 +405,9 @@ func itemInputFromRequest(r *http.Request) (usecase.CreateItemInput, error) {
 	sourceURL := strings.TrimSpace(r.FormValue("source_url"))
 	body := strings.TrimSpace(r.FormValue("body"))
 	title := strings.TrimSpace(r.FormValue("title"))
-	filesBody, firstFilename, err := uploadedFilesBody(r)
+	blobs, firstFilename, err := uploadedFiles(r)
 	if err != nil {
 		return usecase.CreateItemInput{}, err
-	}
-	if filesBody != "" {
-		if body != "" {
-			body += "\n\n"
-		}
-		body += filesBody
 	}
 	if title == "" {
 		title = defaultTitle(sourceURL, firstFilename, body)
@@ -399,18 +418,19 @@ func itemInputFromRequest(r *http.Request) (usecase.CreateItemInput, error) {
 		Body:      body,
 		SourceURL: sourceURL,
 		Tags:      splitCSV(r.FormValue("tags")),
+		Blobs:     blobs,
 	}, nil
 }
 
-func uploadedFilesBody(r *http.Request) (string, string, error) {
+func uploadedFiles(r *http.Request) ([]usecase.BlobInput, string, error) {
 	if r.MultipartForm == nil || r.MultipartForm.File == nil {
-		return "", "", nil
+		return nil, "", nil
 	}
 	files := r.MultipartForm.File["files"]
 	if len(files) == 0 {
 		files = r.MultipartForm.File["file"]
 	}
-	var out strings.Builder
+	var blobs []usecase.BlobInput
 	firstFilename := ""
 	for _, header := range files {
 		if header == nil || header.Filename == "" {
@@ -421,34 +441,26 @@ func uploadedFilesBody(r *http.Request) (string, string, error) {
 		}
 		file, err := header.Open()
 		if err != nil {
-			return "", "", err
+			return nil, "", err
 		}
 		content, readErr := io.ReadAll(io.LimitReader(file, 32<<20+1))
 		closeErr := file.Close()
 		if readErr != nil {
-			return "", "", readErr
+			return nil, "", readErr
 		}
 		if closeErr != nil {
-			return "", "", closeErr
+			return nil, "", closeErr
 		}
 		if len(content) > 32<<20 {
-			return "", "", fmt.Errorf("%s is larger than 32MB", header.Filename)
-		}
-		if out.Len() == 0 {
-			out.WriteString("## Uploaded files\n\n")
+			return nil, "", fmt.Errorf("%s is larger than 32MB", header.Filename)
 		}
 		contentType := header.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		out.WriteString(fmt.Sprintf("### %s\n\nContent-Type: %s\nSize: %d bytes\n\n```base64\n%s\n```\n\n",
-			header.Filename,
-			contentType,
-			len(content),
-			base64.StdEncoding.EncodeToString(content),
-		))
+		blobs = append(blobs, usecase.BlobInput{Filename: header.Filename, ContentType: contentType, Content: content})
 	}
-	return strings.TrimSpace(out.String()), firstFilename, nil
+	return blobs, firstFilename, nil
 }
 
 func splitUploadedFiles(body string) (string, string) {
@@ -570,6 +582,14 @@ func imageDataURL(contentType, rawBase64 string) (string, bool) {
 	return "data:" + contentType + ";base64," + encoded, true
 }
 
+func isImageBlob(contentType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "image/")
+}
+
+func blobURL(blobID string) string {
+	return "/items/blob?id=" + template.URLQueryEscaper(blobID)
+}
+
 func manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json")
 	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}`))
@@ -655,6 +675,13 @@ const indexHTML = `<!doctype html>
         <small>{{.Type}} · {{.CreatedAt}} · {{range .Tags}}#{{.}} {{end}}</small>
         {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
         <div class="item-body">{{renderBody .Body}}</div>
+        {{range .Blobs}}
+          {{if isImageBlob .ContentType}}
+            <figure class="uploaded-image-frame"><img class="uploaded-image" src="{{blobURL .ID}}" alt="{{.Filename}}"><figcaption>{{.Filename}}</figcaption></figure>
+          {{else}}
+            <p><a href="{{blobURL .ID}}">{{.Filename}}</a></p>
+          {{end}}
+        {{end}}
         <div class="actions">
           <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
           <form method="post" action="/items/delete">
