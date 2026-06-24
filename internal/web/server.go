@@ -686,7 +686,7 @@ const indexHTML = `<!doctype html>
           <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
           <form method="post" action="/items/delete">
           <input type="hidden" name="id" value="{{.ID}}">
-            <button>Delete</button>
+            <button class="ghost">Delete</button>
           </form>
         </div>
       </article>
