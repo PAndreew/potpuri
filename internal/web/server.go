@@ -440,6 +440,7 @@ func roseLogo(w http.ResponseWriter, r *http.Request) {
 
 const baseCSS = `
     body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.45}
+    body{overflow-wrap:anywhere}
     input,textarea,button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
     button{width:auto}
     a{color:#0645ad}
@@ -457,7 +458,7 @@ const baseCSS = `
     article h2{margin-bottom:4px}
     article form{margin-top:8px}
     small{color:#555}
-    pre{white-space:pre-wrap}
+    pre{white-space:pre-wrap;overflow-wrap:anywhere}
 `
 
 const indexHTML = `<!doctype html>

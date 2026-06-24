@@ -199,6 +199,9 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	if !strings.Contains(body, `href="/static/rose.svg"`) || !strings.Contains(body, `src="/static/rose.svg"`) {
 		t.Fatalf("home page missing rose logo/favicon: %s", body)
 	}
+	if !strings.Contains(body, `overflow-wrap:anywhere`) {
+		t.Fatalf("home page stylesheet should wrap long text: %s", body)
+	}
 	if strings.Contains(body, `name="source_url"`) || strings.Contains(body, `type="file"`) {
 		t.Fatalf("home page should not show capture form: %s", body)
 	}
