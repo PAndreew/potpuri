@@ -437,7 +437,11 @@ func uploadedFilesBody(r *http.Request) (string, string, error) {
 }
 
 func splitUploadedFiles(body string) (string, string) {
-	const marker = "\n\n## Uploaded files\n\n"
+	const heading = "## Uploaded files\n\n"
+	if strings.HasPrefix(body, heading) {
+		return "", strings.TrimSpace(body)
+	}
+	const marker = "\n\n" + heading
 	index := strings.Index(body, marker)
 	if index < 0 {
 		return body, ""
@@ -590,8 +594,8 @@ const baseCSS = `
     .auth-logo{display:block;width:64px;height:64px;margin:0 auto 16px}
     .auth-form h1{text-align:center;font-size:2rem;margin:0 0 20px}
     .auth-actions{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;margin-top:4px}
-    .auth-actions button{margin:0}
-    .signup-link{color:#0645ad}
+    .auth-actions button{margin:0;padding:8px 16px;min-width:112px}
+    .signup-link{color:#0645ad;display:inline-flex;padding:8px 16px}
     header form{margin:0}
     .top-link{display:block;margin:0 0 12px}
     .search{display:flex;gap:8px;align-items:start}
@@ -623,7 +627,7 @@ const indexHTML = `<!doctype html>
   {{if .UserID}}
     <header>
       <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-      <form method="post" action="/logout"><button>Log out</button></form>
+      <form method="post" action="/logout"><button class="ghost">Log out</button></form>
     </header>
     <a class="top-link" href="/add">Add to Potpuri</a>
     <form class="search" method="get" action="/">
@@ -637,10 +641,10 @@ const indexHTML = `<!doctype html>
         {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
         <div class="item-body">{{renderBody .Body}}</div>
         <div class="actions">
-          <a class="button ghost" href="/items/edit?id={{.ID}}">Edit</a>
+          <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
           <form method="post" action="/items/delete">
           <input type="hidden" name="id" value="{{.ID}}">
-            <button class="ghost">Delete</button>
+            <button>Delete</button>
           </form>
         </div>
       </article>
@@ -733,7 +737,7 @@ const addHTML = `<!doctype html>
 <body>
   <header>
     <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-    <form method="post" action="/logout"><button>Log out</button></form>
+    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
   </header>
   <a class="top-link" href="/">Back to items</a>
   <form method="post" action="/items" enctype="multipart/form-data">
@@ -765,7 +769,7 @@ const editHTML = `<!doctype html>
 <body>
   <header>
     <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-    <form method="post" action="/logout"><button>Log out</button></form>
+    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
   </header>
   <a class="top-link" href="/">Back to items</a>
   <form method="post" action="/items/edit" enctype="multipart/form-data">

@@ -251,7 +251,7 @@ func TestLoginPageShowsCenteredSignInFormWithSignUpLink(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`<title>Sign in - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `class="auth-logo" src="/static/rose.svg"`, `flex-direction:column`, `action="/login"`, `type="email"`, `type="password"`, `<button>Sign in</button>`, `class="signup-link" href="/register">Sign up</a>`} {
+	for _, want := range []string{`<title>Sign in - Potpuri</title>`, `class="auth-page"`, `class="auth-form"`, `class="auth-logo" src="/static/rose.svg"`, `flex-direction:column`, `padding:8px 16px`, `action="/login"`, `type="email"`, `type="password"`, `<button>Sign in</button>`, `class="signup-link" href="/register">Sign up</a>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("login page missing %s: %s", want, body)
 		}
@@ -307,7 +307,7 @@ func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`href="/items/edit?id=` + item.ID + `"`, `class="button ghost"`, `<button class="ghost">Delete</button>`} {
+	for _, want := range []string{`<button class="ghost">Log out</button>`, `href="/items/edit?id=` + item.ID + `"`, `class="button"`, `<button>Delete</button>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home page missing item action %s: %s", want, body)
 		}
@@ -512,7 +512,7 @@ func TestEditPageKeepsUploadedImagesOutOfTextareaAndPreservesThemOnSave(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	itemBody := "caption\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
+	itemBody := "## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
 	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: itemBody})
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +527,7 @@ func TestEditPageKeepsUploadedImagesOutOfTextareaAndPreservesThemOnSave(t *testi
 		t.Fatalf("edit form failed: %d %s", rec.Code, rec.Body.String())
 	}
 	editPage := rec.Body.String()
-	if !strings.Contains(editPage, `<textarea id="body" name="body" rows="10" placeholder="Paste or write anything">caption</textarea>`) {
+	if !strings.Contains(editPage, `<textarea id="body" name="body" rows="10" placeholder="Paste or write anything"></textarea>`) {
 		t.Fatalf("edit textarea should contain only editable text: %s", editPage)
 	}
 	if strings.Contains(editPage, "```base64") {
