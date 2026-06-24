@@ -221,6 +221,7 @@ func (s *Server) clipboardAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		itemInput.Tags = append(itemInput.Tags, "clipboard")
 	} else {
 		var input struct {
 			Text   string `json:"text"`
@@ -233,6 +234,10 @@ func (s *Server) clipboardAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		itemInput = itemInputFromClipboardText(input.Text, input.Title, firstNonEmpty(input.URL, input.Source))
+	}
+	if !hasCaptureContent(itemInput) {
+		http.Error(w, "clipboard is empty or unavailable", http.StatusBadRequest)
+		return
 	}
 	itemInput.UserID = userID
 	item, err := s.svc.CreateItem(r.Context(), itemInput)
@@ -264,9 +269,13 @@ func splitCSV(raw string) []string {
 
 func itemInputFromClipboardText(text, title, sourceURL string) usecase.CreateItemInput {
 	text = strings.TrimSpace(text)
+	title = strings.TrimSpace(title)
 	sourceURL = strings.TrimSpace(sourceURL)
 	if sourceURL == "" && isLikelyURL(text) {
 		sourceURL = text
+	}
+	if text == "" && sourceURL == "" && title == "" {
+		return usecase.CreateItemInput{}
 	}
 	if title == "" {
 		title = defaultTitle(sourceURL, "", text)
@@ -282,6 +291,12 @@ func itemInputFromClipboardText(text, title, sourceURL string) usecase.CreateIte
 		SourceURL: sourceURL,
 		Tags:      []string{"clipboard"},
 	}
+}
+
+func hasCaptureContent(input usecase.CreateItemInput) bool {
+	return strings.TrimSpace(input.Title) != "" ||
+		strings.TrimSpace(input.Body) != "" ||
+		strings.TrimSpace(input.SourceURL) != ""
 }
 
 func itemInputFromRequest(r *http.Request) (usecase.CreateItemInput, error) {
@@ -527,13 +542,20 @@ const addHTML = `<!doctype html>
     <input name="source_url" placeholder="Optional source URL">
     <input name="tags" placeholder="tags, comma separated">
     <button>Add</button>
-    <button type="button" onclick="addClipboard()">Add clipboard</button>
+    <button id="clipboard-button" type="button" onclick="addClipboard()">Add clipboard</button>
+    <p id="clipboard-status" role="status"></p>
   </form>
   <script>
     navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
     async function addClipboard(){
+      const button = document.getElementById("clipboard-button");
+      const status = document.getElementById("clipboard-status");
+      const body = document.getElementById("body");
+      const files = document.getElementById("files");
       const form = new FormData();
       let text = "";
+      button.disabled = true;
+      status.textContent = "Reading clipboard...";
       if (navigator.clipboard && navigator.clipboard.read) {
         try {
           const items = await navigator.clipboard.read();
@@ -548,15 +570,34 @@ const addHTML = `<!doctype html>
               }
             }
           }
-        } catch (err) {}
+        } catch (err) {
+          status.textContent = "Clipboard file access was not allowed. Trying text...";
+        }
       }
       if (!text && navigator.clipboard && navigator.clipboard.readText) {
-        text = await navigator.clipboard.readText();
+        try {
+          text = await navigator.clipboard.readText();
+        } catch (err) {
+          status.textContent = "Clipboard text access was not allowed.";
+        }
+      }
+      if (!text && body.value.trim()) {
+        text = body.value;
+      }
+      for (const file of files.files) {
+        form.append("files", file);
+      }
+      if (!text && !form.has("files")) {
+        status.textContent = "Nothing to add. Paste text here or choose a file, then try again.";
+        button.disabled = false;
+        return;
       }
       form.append("body", text);
+      status.textContent = "Adding...";
       const response = await fetch("/api/clipboard", {method:"POST", body:form});
       if (!response.ok) {
-        alert(await response.text());
+        status.textContent = (await response.text()).trim() || "Could not add clipboard.";
+        button.disabled = false;
         return;
       }
       location.href = "/";

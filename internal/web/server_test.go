@@ -107,6 +107,68 @@ func TestClipboardAPIInfersURLItem(t *testing.T) {
 	}
 }
 
+func TestClipboardAPIRejectsEmptyCapture(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "empty-clip@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/clipboard", strings.NewReader(`{"text":"   "}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected empty clipboard to be rejected, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "clipboard is empty") {
+		t.Fatalf("expected useful empty clipboard error, got %q", rec.Body.String())
+	}
+}
+
+func TestAddPageHasClipboardStatusAndFallbackInputs(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "add-page@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/add", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{`id="clipboard-button"`, `id="clipboard-status"`, `id="body"`, `id="files"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("add page missing %s: %s", want, body)
+		}
+	}
+	if !strings.Contains(body, "Nothing to add") || !strings.Contains(body, "Clipboard text access was not allowed") {
+		t.Fatalf("add page missing clipboard feedback copy: %s", body)
+	}
+}
+
 func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
