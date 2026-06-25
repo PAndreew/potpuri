@@ -383,7 +383,7 @@ func TestHomeRendersUploadedImageBlocksAsRoundedImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := "<script>alert(1)</script>\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
+	body := "# Heading\n\n**bold** [evil](javascript:alert(1)) <script>alert(1)</script>\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
 	if _, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: body}); err != nil {
 		t.Fatal(err)
 	}
@@ -394,14 +394,18 @@ func TestHomeRendersUploadedImageBlocksAsRoundedImages(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
 	server.Routes().ServeHTTP(rec, req)
 	page := rec.Body.String()
-	for _, want := range []string{`class="uploaded-image"`, `border-radius:12px`, `src="data:image/png;base64,AQID"`, `alt="photo.png"`, `<figcaption>photo.png</figcaption>`, `&lt;script&gt;alert(1)&lt;/script&gt;`} {
+	// The uploaded image still renders as a rounded figure, and the editable
+	// text above it is now rendered as Markdown.
+	for _, want := range []string{`class="uploaded-image"`, `border-radius:12px`, `src="data:image/png;base64,AQID"`, `alt="photo.png"`, `<figcaption>photo.png</figcaption>`, `<h1>Heading</h1>`, `<strong>bold</strong>`} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("home page missing rendered image detail %s: %s", want, page)
+			t.Fatalf("home page missing rendered detail %s: %s", want, page)
 		}
 	}
-	for _, removed := range []string{`<script>alert(1)</script>`, "```base64\nAQID\n```"} {
+	// Markdown rendering must not become an injection surface: raw <script>,
+	// javascript: links, and the raw base64 upload block stay out of the page.
+	for _, removed := range []string{`<script>alert(1)</script>`, `href="javascript:`, "```base64\nAQID\n```"} {
 		if strings.Contains(page, removed) {
-			t.Fatalf("home page should not expose raw body fragment %q: %s", removed, page)
+			t.Fatalf("home page should not expose unsafe body fragment %q: %s", removed, page)
 		}
 	}
 }

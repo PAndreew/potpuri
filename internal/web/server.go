@@ -1,7 +1,8 @@
 package web
 
 import (
-	_ "embed"
+	"bytes"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,12 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/microcosm-cc/bluemonday"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 
 	"potpuri/internal/domain"
 	"potpuri/internal/usecase"
@@ -17,6 +24,18 @@ import (
 
 //go:embed static/rose.svg
 var roseSVG []byte
+
+//go:embed templates/*.html
+var templatesFS embed.FS
+
+var templateFuncs = template.FuncMap{
+	"renderBody":  renderBody,
+	"isImageBlob": isImageBlob,
+	"blobURL":     blobURL,
+	"joinTags":    joinTags,
+	"snippet":     snippet,
+	"fmtDate":     fmtDate,
+}
 
 type Server struct {
 	svc         *usecase.Service
@@ -39,18 +58,27 @@ func NewServer(svc *usecase.Service) *Server {
 
 func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 	return &Server{
-		svc: svc,
-		index: template.Must(template.New("index").Funcs(template.FuncMap{
-			"renderBody":  renderBody,
-			"isImageBlob": isImageBlob,
-			"blobURL":     blobURL,
-		}).Parse(indexHTML)),
-		loginTpl:    template.Must(template.New("login").Parse(loginHTML)),
-		registerTpl: template.Must(template.New("register").Parse(registerHTML)),
-		addTpl:      template.Must(template.New("add").Parse(addHTML)),
-		editTpl:     template.Must(template.New("edit").Funcs(template.FuncMap{"joinTags": joinTags}).Parse(editHTML)),
+		svc:         svc,
+		index:       parsePage("index.html"),
+		loginTpl:    parsePage("login.html"),
+		registerTpl: parsePage("register.html"),
+		addTpl:      parsePage("add.html"),
+		editTpl:     parsePage("edit.html"),
 		config:      config,
 	}
+}
+
+// parsePage builds a standalone template set for one page: the shared base
+// layout, styles, and header partials plus the page-specific body. Each page
+// gets its own set so the per-page "title"/"body" definitions do not collide.
+func parsePage(page string) *template.Template {
+	return template.Must(template.New("base").Funcs(templateFuncs).ParseFS(
+		templatesFS,
+		"templates/base.html",
+		"templates/styles.html",
+		"templates/header.html",
+		"templates/"+page,
+	))
 }
 
 func (s *Server) Routes() http.Handler {
@@ -536,11 +564,29 @@ func writeJSON(w http.ResponseWriter, value any) {
 
 var uploadedFileBlockRE = regexp.MustCompile("(?s)### ([^\n]+)\n\nContent-Type: ([^\n]+)\nSize: [0-9]+ bytes\n\n```base64\n([A-Za-z0-9+/=\\r\\n]+)\n```")
 
+// markdownRenderer converts note text to HTML. Raw HTML in the source is
+// dropped (no WithUnsafe), and the result is still passed through bluemonday,
+// so stored notes cannot inject script or javascript: URLs.
+var markdownRenderer = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	goldmark.WithRendererOptions(goldmarkhtml.WithHardWraps()),
+)
+
+var bodySanitizer = bluemonday.UGCPolicy()
+
+func renderMarkdown(text string) string {
+	var buf bytes.Buffer
+	if err := markdownRenderer.Convert([]byte(text), &buf); err != nil {
+		return template.HTMLEscapeString(text)
+	}
+	return bodySanitizer.Sanitize(buf.String())
+}
+
 func renderBody(body string) template.HTML {
 	var out strings.Builder
 	last := 0
 	for _, match := range uploadedFileBlockRE.FindAllStringSubmatchIndex(body, -1) {
-		out.WriteString(template.HTMLEscapeString(body[last:match[0]]))
+		out.WriteString(renderMarkdown(body[last:match[0]]))
 		filename := body[match[2]:match[3]]
 		contentType := body[match[4]:match[5]]
 		rawBase64 := body[match[6]:match[7]]
@@ -557,8 +603,28 @@ func renderBody(body string) template.HTML {
 		}
 		last = match[1]
 	}
-	out.WriteString(template.HTMLEscapeString(body[last:]))
+	out.WriteString(renderMarkdown(body[last:]))
 	return template.HTML(out.String())
+}
+
+var snippetWhitespaceRE = regexp.MustCompile(`\s+`)
+
+// snippet renders a short, single-line plain-text teaser for the collapsed
+// entry list: editable text only (uploaded-file blocks stripped), Markdown
+// punctuation flattened, collapsed whitespace, truncated to ~160 chars.
+func snippet(body string) string {
+	text, _ := splitUploadedFiles(body)
+	text = snippetWhitespaceRE.ReplaceAllString(text, " ")
+	text = strings.TrimSpace(strings.Trim(text, "#>*`-_ "))
+	const limit = 160
+	if len(text) > limit {
+		text = strings.TrimSpace(text[:limit]) + "…"
+	}
+	return text
+}
+
+func fmtDate(t time.Time) string {
+	return t.Format("Jan 2, 2006")
 }
 
 func imageDataURL(contentType, rawBase64 string) (string, bool) {
@@ -604,229 +670,3 @@ func roseLogo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml")
 	_, _ = w.Write(roseSVG)
 }
-
-const baseCSS = `
-    body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.45}
-    body{overflow-wrap:anywhere}
-    input,textarea,button,.button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
-    button,.button{width:auto;border:1px solid #111;border-radius:999px;background:#111;color:#fff;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;line-height:1.2}
-    .button.ghost,button.ghost{background:transparent;color:#111;border-color:#bbb}
-    .actions{display:flex;gap:8px;align-items:center;margin-top:8px}
-    .actions form{margin:0}
-    a{color:#0645ad}
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}
-    header h1{font-size:1.5rem;margin:0}
-    .brand{display:flex;align-items:center;gap:8px;color:inherit;text-decoration:none}
-    .brand img{width:28px;height:28px}
-    .signed-out{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center;text-align:center}
-    .intro{max-width:480px;margin:0 auto}
-    .intro img{width:84px;height:84px;margin-bottom:16px}
-    .intro h1{font-size:2rem;margin:0 0 12px}
-    .intro p{margin:0 0 24px;color:#333}
-    .intro .button{min-width:112px}
-    .auth-page{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center}
-    .auth-form{width:100%;max-width:360px}
-    .auth-logo{display:block;width:64px;height:64px;margin:0 auto 16px}
-    .auth-form h1{text-align:center;font-size:2rem;margin:0 0 20px}
-    .auth-actions{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;margin-top:4px}
-    .auth-actions button{margin:0;padding:8px 16px;min-width:112px}
-    .signup-link{color:#0645ad;display:inline-flex;padding:8px 16px}
-    header form{margin:0}
-    .top-link{display:block;margin:0 0 12px}
-    .search{display:flex;gap:8px;align-items:start}
-    .search input{flex:1}
-    .field{margin-bottom:12px}
-    label{display:block;font-size:.9rem;color:#333}
-    article{border-top:1px solid #ddd;padding:16px 0}
-    article h2{margin-bottom:4px}
-    small{color:#555}
-    pre,.item-body{white-space:pre-wrap;overflow-wrap:anywhere}
-    .uploaded-image-frame{margin:12px 0}
-    .uploaded-image{display:block;max-width:100%;height:auto;border-radius:12px}
-    .uploaded-image-frame figcaption{font-size:.85rem;color:#555;margin-top:6px}
-`
-
-const indexHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
-  <title>Potpuri</title>
-  <style>
-` + baseCSS + `
-  </style>
-</head>
-<body>
-  {{if .UserID}}
-    <header>
-      <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-      <form method="post" action="/logout"><button class="ghost">Log out</button></form>
-    </header>
-    <a class="top-link" href="/add">Add to Potpuri</a>
-    <form class="search" method="get" action="/">
-      <input name="q" value="{{.Query}}" placeholder="Search">
-      <button>Search</button>
-    </form>
-    {{range .Items}}
-      <article>
-        <h2>{{.Title}}</h2>
-        <small>{{.Type}} · {{.CreatedAt}} · {{range .Tags}}#{{.}} {{end}}</small>
-        {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
-        <div class="item-body">{{renderBody .Body}}</div>
-        {{range .Blobs}}
-          {{if isImageBlob .ContentType}}
-            <figure class="uploaded-image-frame"><img class="uploaded-image" src="{{blobURL .ID}}" alt="{{.Filename}}"><figcaption>{{.Filename}}</figcaption></figure>
-          {{else}}
-            <p><a href="{{blobURL .ID}}">{{.Filename}}</a></p>
-          {{end}}
-        {{end}}
-        <div class="actions">
-          <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
-          <form method="post" action="/items/delete">
-          <input type="hidden" name="id" value="{{.ID}}">
-            <button class="ghost">Delete</button>
-          </form>
-        </div>
-      </article>
-    {{else}}
-      <p>No entries yet.</p>
-    {{end}}
-    <script>
-      navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
-    </script>
-  {{else}}
-    <main class="signed-out">
-      <div class="intro">
-        <img src="/static/rose.svg" alt="">
-        <h1>Potpuri</h1>
-        <p>Potpuri is a minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.</p>
-        <a class="button" href="/login">Sign in</a>
-      </div>
-    </main>
-  {{end}}
-</body>
-</html>`
-
-const loginHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
-  <title>Sign in - Potpuri</title>
-  <style>
-` + baseCSS + `
-  </style>
-</head>
-<body>
-  <main class="auth-page">
-    <form class="auth-form" method="post" action="/login">
-      <img class="auth-logo" src="/static/rose.svg" alt="">
-      <h1>Sign in</h1>
-      <input name="email" type="email" placeholder="Email">
-      <input name="password" type="password" placeholder="Password">
-      <div class="auth-actions">
-        <button>Sign in</button>
-        {{if .AllowRegistration}}
-        <a class="signup-link" href="/register">Sign up</a>
-        {{end}}
-      </div>
-    </form>
-  </main>
-</body>
-</html>`
-
-const registerHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
-  <title>Sign up - Potpuri</title>
-  <style>
-` + baseCSS + `
-  </style>
-</head>
-<body>
-  <main class="auth-page">
-    <form class="auth-form" method="post" action="/register">
-      <img class="auth-logo" src="/static/rose.svg" alt="">
-      <h1>Sign up</h1>
-      <input name="email" type="email" placeholder="Email">
-      <input name="password" type="password" placeholder="Password">
-      <div class="auth-actions">
-        <button>Sign up</button>
-      </div>
-    </form>
-  </main>
-</body>
-</html>`
-
-const addHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
-  <title>Add to Potpuri</title>
-  <style>
-` + baseCSS + `
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
-  </header>
-  <a class="top-link" href="/">Back to items</a>
-  <form method="post" action="/items" enctype="multipart/form-data">
-    <input name="title" placeholder="Title">
-    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything"></textarea>
-    <input id="files" name="files" type="file" multiple>
-    <input name="source_url" placeholder="Optional source URL">
-    <input name="tags" placeholder="tags, comma separated">
-    <button class="add-button">Add</button>
-  </form>
-  <script>
-    navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
-  </script>
-</body>
-</html>`
-
-const editHTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
-  <title>Edit {{.Item.Title}} - Potpuri</title>
-  <style>
-` + baseCSS + `
-  </style>
-</head>
-<body>
-  <header>
-    <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
-  </header>
-  <a class="top-link" href="/">Back to items</a>
-  <form method="post" action="/items/edit" enctype="multipart/form-data">
-    <input type="hidden" name="id" value="{{.Item.ID}}">
-    <input name="title" placeholder="Title" value="{{.Item.Title}}">
-    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything">{{.EditableBody}}</textarea>
-    <input id="files" name="files" type="file" multiple>
-    <input name="source_url" placeholder="Optional source URL" value="{{.Item.SourceURL}}">
-    <input name="tags" placeholder="tags, comma separated" value="{{joinTags .Item.Tags}}">
-    <button>Save changes</button>
-  </form>
-  <script>
-    navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
-  </script>
-</body>
-</html>`

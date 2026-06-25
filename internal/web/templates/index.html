@@ -1,0 +1,50 @@
+{{define "title"}}Potpuri{{end}}
+{{define "body"}}
+  {{if .UserID}}
+    {{template "header" .}}
+    <a class="top-link" href="/add">Add to Potpuri</a>
+    <form class="search" method="get" action="/">
+      <input name="q" value="{{.Query}}" placeholder="Search">
+      <button>Search</button>
+    </form>
+    {{range .Items}}
+      <details class="entry">
+        <summary class="entry-summary">
+          <span class="entry-title">{{.Title}}</span>
+          <small class="entry-meta">{{.Type}} · {{fmtDate .CreatedAt}}{{range .Tags}} #{{.}}{{end}}</small>
+          <span class="entry-snippet">{{snippet .Body}}</span>
+        </summary>
+        <div class="entry-body">
+          {{if .SourceURL}}<p><a href="{{.SourceURL}}">{{.SourceURL}}</a></p>{{end}}
+          <div class="item-body">{{renderBody .Body}}</div>
+          {{range .Blobs}}
+            {{if isImageBlob .ContentType}}
+              <figure class="uploaded-image-frame"><img class="uploaded-image" src="{{blobURL .ID}}" alt="{{.Filename}}"><figcaption>{{.Filename}}</figcaption></figure>
+            {{else}}
+              <p><a href="{{blobURL .ID}}">{{.Filename}}</a></p>
+            {{end}}
+          {{end}}
+          <div class="actions">
+            <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
+            <form method="post" action="/items/delete">
+            <input type="hidden" name="id" value="{{.ID}}">
+              <button class="ghost">Delete</button>
+            </form>
+          </div>
+        </div>
+      </details>
+    {{else}}
+      <p>No entries yet.</p>
+    {{end}}
+    {{template "sw-script" .}}
+  {{else}}
+    <main class="signed-out">
+      <div class="intro">
+        <img src="/static/rose.svg" alt="">
+        <h1>Potpuri</h1>
+        <p>Potpuri is a minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.</p>
+        <a class="button" href="/login">Sign in</a>
+      </div>
+    </main>
+  {{end}}
+{{end}}

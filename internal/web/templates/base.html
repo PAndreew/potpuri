@@ -1,0 +1,14 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/rose.svg" type="image/svg+xml">
+  <title>{{block "title" .}}Potpuri{{end}}</title>
+  <style>{{template "styles" .}}</style>
+</head>
+<body>
+{{template "body" .}}
+</body>
+</html>{{end}}

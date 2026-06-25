@@ -1,0 +1,15 @@
+{{define "title"}}Edit {{.Item.Title}} - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/">Back to items</a>
+  <form method="post" action="/items/edit" enctype="multipart/form-data">
+    <input type="hidden" name="id" value="{{.Item.ID}}">
+    <input name="title" placeholder="Title" value="{{.Item.Title}}">
+    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything">{{.EditableBody}}</textarea>
+    <input id="files" name="files" type="file" multiple>
+    <input name="source_url" placeholder="Optional source URL" value="{{.Item.SourceURL}}">
+    <input name="tags" placeholder="tags, comma separated" value="{{joinTags .Item.Tags}}">
+    <button>Save changes</button>
+  </form>
+  {{template "sw-script" .}}
+{{end}}

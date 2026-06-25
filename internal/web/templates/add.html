@@ -1,0 +1,14 @@
+{{define "title"}}Add to Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/">Back to items</a>
+  <form method="post" action="/items" enctype="multipart/form-data">
+    <input name="title" placeholder="Title">
+    <textarea id="body" name="body" rows="10" placeholder="Paste or write anything (Markdown supported)"></textarea>
+    <input id="files" name="files" type="file" multiple>
+    <input name="source_url" placeholder="Optional source URL">
+    <input name="tags" placeholder="tags, comma separated">
+    <button class="add-button">Add</button>
+  </form>
+  {{template "sw-script" .}}
+{{end}}

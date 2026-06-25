@@ -1,0 +1,17 @@
+{{define "title"}}Sign in - Potpuri{{end}}
+{{define "body"}}
+  <main class="auth-page">
+    <form class="auth-form" method="post" action="/login">
+      <img class="auth-logo" src="/static/rose.svg" alt="">
+      <h1>Sign in</h1>
+      <input name="email" type="email" placeholder="Email">
+      <input name="password" type="password" placeholder="Password">
+      <div class="auth-actions">
+        <button>Sign in</button>
+        {{if .AllowRegistration}}
+        <a class="signup-link" href="/register">Sign up</a>
+        {{end}}
+      </div>
+    </form>
+  </main>
+{{end}}

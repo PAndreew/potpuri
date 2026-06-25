@@ -1,0 +1,8 @@
+{{define "header"}}<header>
+    <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
+    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
+  </header>{{end}}
+
+{{define "sw-script"}}<script>
+    navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
+  </script>{{end}}
