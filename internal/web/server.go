@@ -92,6 +92,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.login)
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/share", s.shareHTML)
 	mux.HandleFunc("/tokens", s.tokensHTML)
 	mux.HandleFunc("/tokens/revoke", s.revokeTokenHTML)
 	mux.HandleFunc("/items", s.createItemHTML)
@@ -401,6 +402,30 @@ func (s *Server) currentUserID(r *http.Request) (string, error) {
 		return s.svc.UserIDForAPIToken(r.Context(), strings.TrimPrefix(auth, "Bearer "))
 	}
 	return "", errors.New("not authenticated")
+}
+
+func (s *Server) shareHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	q := r.URL.Query()
+	input := itemInputFromClipboardText(q.Get("text"), q.Get("title"), q.Get("url"))
+	if !hasCaptureContent(input) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	input.UserID = userID
+	if _, err := s.svc.CreateItem(r.Context(), input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) tokensHTML(w http.ResponseWriter, r *http.Request) {
@@ -740,7 +765,7 @@ func blobURL(blobID string) string {
 
 func manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json")
-	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}`))
+	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],"share_target":{"action":"/share","method":"GET","params":{"title":"title","text":"text","url":"url"}}}`))
 }
 
 func serviceWorker(w http.ResponseWriter, r *http.Request) {

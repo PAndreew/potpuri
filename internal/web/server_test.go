@@ -3,6 +3,7 @@ package web_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -826,5 +827,141 @@ func TestAPITokenAuthorizesClipboardAndItems(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("expected CORS allow-origin *, got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestShareTargetSavesPageAndRedirectsHome(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "share@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/share?title=Great+Article&url=https%3A%2F%2Fexample.com%2Farticle&text=Interesting+read", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/" {
+		t.Fatalf("expected redirect to /, got %s", rec.Header().Get("Location"))
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one saved item, got %d", len(items))
+	}
+	if items[0].Title != "Great Article" || items[0].SourceURL != "https://example.com/article" {
+		t.Fatalf("shared item has wrong fields: %#v", items[0])
+	}
+}
+
+func TestShareTargetRequiresSessionCookie(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/share?title=x&url=https://example.com", nil)
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect to login, got %d", rec.Code)
+	}
+	if !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
+		t.Fatalf("expected redirect to /login, got %s", rec.Header().Get("Location"))
+	}
+}
+
+func TestShareTargetWithNoContentRedirectsHome(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "share-empty@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(context.Background(), user.Email, "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/share", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rec.Code)
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no items saved for empty share, got %d", len(items))
+	}
+}
+
+func TestManifestIncludesShareTarget(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil)
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected manifest, got %d", rec.Code)
+	}
+	var m struct {
+		ShareTarget struct {
+			Action string `json:"action"`
+			Method string `json:"method"`
+			Params struct {
+				Title string `json:"title"`
+				Text  string `json:"text"`
+				URL   string `json:"url"`
+			} `json:"params"`
+		} `json:"share_target"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&m); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if m.ShareTarget.Action != "/share" {
+		t.Fatalf("share_target.action expected /share, got %q", m.ShareTarget.Action)
+	}
+	if m.ShareTarget.Method != "GET" {
+		t.Fatalf("share_target.method expected GET, got %q", m.ShareTarget.Method)
+	}
+	if m.ShareTarget.Params.Title != "title" || m.ShareTarget.Params.Text != "text" || m.ShareTarget.Params.URL != "url" {
+		t.Fatalf("share_target.params wrong: %+v", m.ShareTarget.Params)
 	}
 }
