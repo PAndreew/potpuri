@@ -51,6 +51,7 @@ type Server struct {
 	accountTpl      *template.Template
 	totpConfirmTpl  *template.Template
 	totpRecoveryTpl *template.Template
+	patronTpl       *template.Template
 	config          Config
 }
 
@@ -76,6 +77,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		totpConfirmTpl:  parsePage("totp_confirm.html"),
 		totpRecoveryTpl: parsePage("totp_recovery.html"),
 		loginTOTPTpl:    parsePage("login_totp.html"),
+		patronTpl:       parsePage("patron.html"),
 		config:          config,
 	}
 }
@@ -105,6 +107,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/account/2fa/setup", s.setup2faHTML)
 	mux.HandleFunc("/account/2fa/confirm", s.confirm2faHTML)
 	mux.HandleFunc("/account/2fa/disable", s.disable2faHTML)
+	mux.HandleFunc("/patron", s.patronHTML)
 	mux.HandleFunc("/share", s.shareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
@@ -613,6 +616,10 @@ func writeNetscapeBookmarks(w io.Writer, items []domain.Item) {
 			template.HTMLEscapeString(item.Title))
 	}
 	fmt.Fprintln(w, `</DL><p>`)
+}
+
+func (s *Server) patronHTML(w http.ResponseWriter, r *http.Request) {
+	_ = s.patronTpl.Execute(w, nil)
 }
 
 func (s *Server) shareHTML(w http.ResponseWriter, r *http.Request) {

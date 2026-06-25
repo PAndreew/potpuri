@@ -2,7 +2,11 @@
 {{define "body"}}
   {{if .UserID}}
     {{template "header" .}}
-    <a class="top-link" href="/add">Add to Potpuri</a>
+    <div class="top-actions">
+      <a href="/add">Add to Potpuri</a>
+      <a href="/account" class="muted-link">Settings</a>
+      <a href="/patron" class="muted-link">Become a patron</a>
+    </div>
     <form class="search" method="get" action="/">
       <input name="q" value="{{.Query}}" placeholder="Search">
       <button>Search</button>
