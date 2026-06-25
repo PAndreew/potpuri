@@ -765,3 +765,66 @@ func TestAuthenticatedUserCanDeleteItemThroughHTML(t *testing.T) {
 		t.Fatalf("expected item to be deleted, got %#v", items)
 	}
 }
+
+func TestAPITokenAuthorizesClipboardAndItems(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "pat@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.CreateAPIToken(context.Background(), usecase.CreateAPITokenInput{UserID: user.ID, Name: "test token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	// Bearer token on /api/clipboard
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/clipboard", strings.NewReader(`{"title":"PAT test","text":"hello from token","url":"https://example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+result.RawToken)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clipboard with PAT failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Bearer token on /api/items search
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/items?q=hello", nil)
+	req.Header.Set("Authorization", "Bearer "+result.RawToken)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("items search with PAT failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "PAT test") {
+		t.Fatalf("search result missing saved item: %s", rec.Body.String())
+	}
+
+	// Wrong token is rejected
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/clipboard", strings.NewReader(`{"text":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer wrongtoken")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong PAT, got %d", rec.Code)
+	}
+
+	// CORS preflight gets 204
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodOptions, "/api/clipboard", nil)
+	req.Header.Set("Origin", "https://other-site.com")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for OPTIONS preflight, got %d", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("expected CORS allow-origin *, got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}

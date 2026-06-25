@@ -1,0 +1,44 @@
+{{define "title"}}API Tokens - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/">Back to items</a>
+  <h2>API Tokens</h2>
+  <p>Tokens let external tools and the bookmarklet save items to your Potpuri without a browser session.</p>
+
+  {{if .NewToken}}
+  <div class="token-banner">
+    <strong>Token created: {{.NewName}}</strong>
+    <p>Copy it now — it will not be shown again.</p>
+    <div class="token-value" id="new-token-value">{{.NewToken}}</div>
+    <h3 class="bookmarklet-heading">Bookmarklet</h3>
+    <p>Drag this link to your bookmarks bar. Click it on any page to save it to Potpuri.</p>
+    <a class="bookmarklet-link" href="javascript:(function(){var t='{{.NewToken}}',u='{{.BaseURL}}/api/clipboard',s=window.getSelection().toString();fetch(u,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({title:document.title,url:location.href,text:s})}).then(function(r){if(r.ok)alert('Saved to Potpuri!');else r.text().then(function(m){alert('Error: '+m);});}).catch(function(e){alert('Error: '+e);});})();">Save to Potpuri</a>
+    <p class="token-hint">You can also call the API directly:<br><code>curl -X POST {{.BaseURL}}/api/clipboard \<br>&nbsp;&nbsp;-H 'Authorization: Bearer {{.NewToken}}' \<br>&nbsp;&nbsp;-H 'Content-Type: application/json' \<br>&nbsp;&nbsp;-d '{"title":"My note","text":"body here"}'</code></p>
+  </div>
+  {{end}}
+
+  <h3>Create a new token</h3>
+  <form method="post" action="/tokens">
+    <input name="name" placeholder="Token name (e.g. Bookmarklet, Phone)" required>
+    <button>Create token</button>
+  </form>
+
+  {{if .Tokens}}
+  <h3>Your tokens</h3>
+  <ul class="token-list">
+    {{range .Tokens}}
+    <li class="token-item">
+      <span class="token-name">{{.Name}}</span>
+      <small class="token-date">created {{fmtDate .CreatedAt}}</small>
+      <form method="post" action="/tokens/revoke" class="token-revoke-form">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <button class="ghost">Revoke</button>
+      </form>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}
+    <p>No tokens yet.</p>
+  {{end}}
+  {{template "sw-script" .}}
+{{end}}

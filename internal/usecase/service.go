@@ -21,23 +21,25 @@ var (
 )
 
 type Service struct {
-	users    ports.UserRepository
-	items    ports.ItemRepository
-	blobs    ports.BlobRepository
-	sessions ports.SessionRepository
-	cipher   ports.ItemCipher
-	hasher   ports.PasswordHasher
-	now      func() time.Time
+	users     ports.UserRepository
+	items     ports.ItemRepository
+	blobs     ports.BlobRepository
+	sessions  ports.SessionRepository
+	apiTokens ports.APITokenRepository
+	cipher    ports.ItemCipher
+	hasher    ports.PasswordHasher
+	now       func() time.Time
 }
 
 type NewServiceParams struct {
-	Users    ports.UserRepository
-	Items    ports.ItemRepository
-	Blobs    ports.BlobRepository
-	Sessions ports.SessionRepository
-	Cipher   ports.ItemCipher
-	Hasher   ports.PasswordHasher
-	Now      func() time.Time
+	Users     ports.UserRepository
+	Items     ports.ItemRepository
+	Blobs     ports.BlobRepository
+	Sessions  ports.SessionRepository
+	APITokens ports.APITokenRepository
+	Cipher    ports.ItemCipher
+	Hasher    ports.PasswordHasher
+	Now       func() time.Time
 }
 
 func NewService(params NewServiceParams) *Service {
@@ -51,14 +53,21 @@ func NewService(params NewServiceParams) *Service {
 			blobs = repo
 		}
 	}
+	apiTokens := params.APITokens
+	if apiTokens == nil {
+		if repo, ok := params.Sessions.(ports.APITokenRepository); ok {
+			apiTokens = repo
+		}
+	}
 	return &Service{
-		users:    params.Users,
-		items:    params.Items,
-		blobs:    blobs,
-		sessions: params.Sessions,
-		cipher:   params.Cipher,
-		hasher:   params.Hasher,
-		now:      now,
+		users:     params.Users,
+		items:     params.Items,
+		blobs:     blobs,
+		sessions:  params.Sessions,
+		apiTokens: apiTokens,
+		cipher:    params.Cipher,
+		hasher:    params.Hasher,
+		now:       now,
 	}
 }
 
@@ -111,6 +120,84 @@ func (s *Service) UserIDForSession(ctx context.Context, token string) (string, e
 		return "", ErrUnauthorized
 	}
 	return session.UserID, nil
+}
+
+type APIToken struct {
+	ID        string
+	UserID    string
+	Name      string
+	CreatedAt time.Time
+}
+
+type CreateAPITokenInput struct {
+	UserID string
+	Name   string
+}
+
+type CreateAPITokenResult struct {
+	Token    APIToken
+	RawToken string
+}
+
+func (s *Service) CreateAPIToken(ctx context.Context, input CreateAPITokenInput) (CreateAPITokenResult, error) {
+	if input.UserID == "" {
+		return CreateAPITokenResult{}, ErrUnauthorized
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return CreateAPITokenResult{}, fmt.Errorf("token name is required")
+	}
+	if len(name) > 80 {
+		name = name[:80]
+	}
+	raw := "ptk_" + randomToken()
+	stored := ports.StoredAPIToken{
+		ID:        newID("tok"),
+		UserID:    input.UserID,
+		Name:      name,
+		TokenHash: hashToken(raw),
+		CreatedAt: s.now().UTC(),
+	}
+	if err := s.apiTokens.CreateAPIToken(ctx, stored); err != nil {
+		return CreateAPITokenResult{}, err
+	}
+	return CreateAPITokenResult{
+		Token:    APIToken{ID: stored.ID, UserID: stored.UserID, Name: stored.Name, CreatedAt: stored.CreatedAt},
+		RawToken: raw,
+	}, nil
+}
+
+func (s *Service) ListAPITokens(ctx context.Context, userID string) ([]APIToken, error) {
+	if userID == "" {
+		return nil, ErrUnauthorized
+	}
+	stored, err := s.apiTokens.ListAPITokens(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	tokens := make([]APIToken, len(stored))
+	for i, t := range stored {
+		tokens[i] = APIToken{ID: t.ID, UserID: t.UserID, Name: t.Name, CreatedAt: t.CreatedAt}
+	}
+	return tokens, nil
+}
+
+func (s *Service) RevokeAPIToken(ctx context.Context, userID, tokenID string) error {
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	return s.apiTokens.DeleteAPIToken(ctx, userID, strings.TrimSpace(tokenID))
+}
+
+func (s *Service) UserIDForAPIToken(ctx context.Context, rawToken string) (string, error) {
+	if rawToken == "" {
+		return "", ErrUnauthorized
+	}
+	t, err := s.apiTokens.FindAPIToken(ctx, hashToken(rawToken))
+	if err != nil {
+		return "", ErrUnauthorized
+	}
+	return t.UserID, nil
 }
 
 type CreateItemInput struct {

@@ -34,6 +34,13 @@ type SessionRepository interface {
 	DeleteSession(ctx context.Context, tokenHash string) error
 }
 
+type APITokenRepository interface {
+	CreateAPIToken(ctx context.Context, token StoredAPIToken) error
+	ListAPITokens(ctx context.Context, userID string) ([]StoredAPIToken, error)
+	FindAPIToken(ctx context.Context, tokenHash string) (StoredAPIToken, error)
+	DeleteAPIToken(ctx context.Context, userID string, tokenID string) error
+}
+
 type StoredItem struct {
 	ID              string
 	UserID          string
@@ -61,6 +68,14 @@ type Session struct {
 	TokenHash string
 	UserID    string
 	ExpiresAt time.Time
+}
+
+type StoredAPIToken struct {
+	ID        string
+	UserID    string
+	Name      string
+	TokenHash string
+	CreatedAt time.Time
 }
 
 type ItemCipher interface {

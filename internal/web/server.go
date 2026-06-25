@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -44,6 +45,7 @@ type Server struct {
 	registerTpl *template.Template
 	addTpl      *template.Template
 	editTpl     *template.Template
+	tokensTpl   *template.Template
 	config      Config
 }
 
@@ -64,6 +66,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		registerTpl: parsePage("register.html"),
 		addTpl:      parsePage("add.html"),
 		editTpl:     parsePage("edit.html"),
+		tokensTpl:   parsePage("tokens.html"),
 		config:      config,
 	}
 }
@@ -89,16 +92,33 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.login)
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/tokens", s.tokensHTML)
+	mux.HandleFunc("/tokens/revoke", s.revokeTokenHTML)
 	mux.HandleFunc("/items", s.createItemHTML)
 	mux.HandleFunc("/items/edit", s.editItemHTML)
 	mux.HandleFunc("/items/delete", s.deleteItemHTML)
 	mux.HandleFunc("/items/blob", s.blobHTML)
-	mux.HandleFunc("/api/items", s.itemsAPI)
-	mux.HandleFunc("/api/clipboard", s.clipboardAPI)
+	mux.HandleFunc("/api/items", corsAPI(s.itemsAPI))
+	mux.HandleFunc("/api/clipboard", corsAPI(s.clipboardAPI))
 	mux.HandleFunc("/manifest.webmanifest", manifest)
 	mux.HandleFunc("/sw.js", serviceWorker)
 	mux.HandleFunc("/static/rose.svg", roseLogo)
 	return mux
+}
+
+// corsAPI wraps an API handler with permissive CORS headers so bookmarklets
+// and external tools can call the API with a Bearer token from any origin.
+func corsAPI(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h(w, r)
+	}
 }
 
 func health(w http.ResponseWriter, r *http.Request) {
@@ -372,11 +392,73 @@ func (s *Server) clipboardAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) currentUserID(r *http.Request) (string, error) {
-	cookie, err := r.Cookie("potpuri_session")
-	if err != nil {
-		return "", err
+	if cookie, err := r.Cookie("potpuri_session"); err == nil {
+		if userID, err := s.svc.UserIDForSession(r.Context(), cookie.Value); err == nil {
+			return userID, nil
+		}
 	}
-	return s.svc.UserIDForSession(r.Context(), cookie.Value)
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return s.svc.UserIDForAPIToken(r.Context(), strings.TrimPrefix(auth, "Bearer "))
+	}
+	return "", errors.New("not authenticated")
+}
+
+func (s *Server) tokensHTML(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		tokens, err := s.svc.ListAPITokens(r.Context(), userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		baseURL := scheme + "://" + r.Host
+		data := map[string]any{
+			"UserID":   userID,
+			"Tokens":   tokens,
+			"BaseURL":  baseURL,
+			"NewToken": r.URL.Query().Get("new_token"),
+			"NewName":  r.URL.Query().Get("new_name"),
+		}
+		_ = s.tokensTpl.Execute(w, data)
+	case http.MethodPost:
+		result, err := s.svc.CreateAPIToken(r.Context(), usecase.CreateAPITokenInput{
+			UserID: userID,
+			Name:   r.FormValue("name"),
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, "/tokens?new_token="+template.URLQueryEscaper(result.RawToken)+"&new_name="+template.URLQueryEscaper(result.Token.Name), http.StatusSeeOther)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) revokeTokenHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/tokens", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	if err := s.svc.RevokeAPIToken(r.Context(), userID, r.FormValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, "/tokens", http.StatusSeeOther)
 }
 
 func (s *Server) setSession(w http.ResponseWriter, token string) {

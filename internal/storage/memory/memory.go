@@ -11,17 +11,19 @@ import (
 )
 
 type Store struct {
-	mu       sync.Mutex
-	users    map[string]domain.User
-	items    []ports.StoredItem
-	blobs    []ports.StoredBlob
-	sessions map[string]ports.Session
+	mu        sync.Mutex
+	users     map[string]domain.User
+	items     []ports.StoredItem
+	blobs     []ports.StoredBlob
+	sessions  map[string]ports.Session
+	apiTokens map[string]ports.StoredAPIToken
 }
 
 func New() *Store {
 	return &Store{
-		users:    map[string]domain.User{},
-		sessions: map[string]ports.Session{},
+		users:     map[string]domain.User{},
+		sessions:  map[string]ports.Session{},
+		apiTokens: map[string]ports.StoredAPIToken{},
 	}
 }
 
@@ -201,6 +203,48 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	defer s.mu.Unlock()
 	delete(s.sessions, tokenHash)
 	return nil
+}
+
+func (s *Store) CreateAPIToken(ctx context.Context, token ports.StoredAPIToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.apiTokens[token.TokenHash] = token
+	return nil
+}
+
+func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]ports.StoredAPIToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.StoredAPIToken
+	for _, t := range s.apiTokens {
+		if t.UserID == userID {
+			out = append(out, t)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) FindAPIToken(ctx context.Context, tokenHash string) (ports.StoredAPIToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.apiTokens[tokenHash]
+	if !ok {
+		return ports.StoredAPIToken{}, errors.New("api token not found")
+	}
+	return t, nil
+}
+
+func (s *Store) DeleteAPIToken(ctx context.Context, userID string, tokenID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, t := range s.apiTokens {
+		if t.UserID == userID && t.ID == tokenID {
+			delete(s.apiTokens, hash)
+			return nil
+		}
+	}
+	return errors.New("api token not found")
 }
 
 func cloneItem(item ports.StoredItem) ports.StoredItem {

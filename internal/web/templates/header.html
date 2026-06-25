@@ -1,6 +1,9 @@
 {{define "header"}}<header>
     <div class="brand"><img src="/static/rose.svg" alt=""><h1>Potpuri</h1></div>
-    <form method="post" action="/logout"><button class="ghost">Log out</button></form>
+    <nav style="display:flex;gap:8px;align-items:center">
+      <a href="/tokens" style="font-size:.9rem;color:#555;text-decoration:none">Tokens</a>
+      <form method="post" action="/logout"><button class="ghost">Log out</button></form>
+    </nav>
   </header>{{end}}
 
 {{define "sw-script"}}<script>

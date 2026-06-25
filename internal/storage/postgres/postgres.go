@@ -199,6 +199,48 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return nil
 }
 
+func (s *Store) CreateAPIToken(ctx context.Context, token ports.StoredAPIToken) error {
+	_, err := s.db.ExecContext(ctx, `insert into api_tokens (id, user_id, name, token_hash, created_at) values ($1, $2, $3, $4, $5)`,
+		token.ID, token.UserID, token.Name, token.TokenHash, token.CreatedAt)
+	return err
+}
+
+func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]ports.StoredAPIToken, error) {
+	rows, err := s.db.QueryContext(ctx, `select id, user_id, name, token_hash, created_at from api_tokens where user_id = $1 order by created_at asc`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tokens []ports.StoredAPIToken
+	for rows.Next() {
+		var t ports.StoredAPIToken
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+func (s *Store) FindAPIToken(ctx context.Context, tokenHash string) (ports.StoredAPIToken, error) {
+	var t ports.StoredAPIToken
+	err := s.db.QueryRowContext(ctx, `select id, user_id, name, token_hash, created_at from api_tokens where token_hash = $1`, tokenHash).
+		Scan(&t.ID, &t.UserID, &t.Name, &t.TokenHash, &t.CreatedAt)
+	return t, err
+}
+
+func (s *Store) DeleteAPIToken(ctx context.Context, userID string, tokenID string) error {
+	result, err := s.db.ExecContext(ctx, `delete from api_tokens where user_id = $1 and id = $2`, userID, tokenID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("api token not found")
+	}
+	return nil
+}
+
 func scanItems(rows *sql.Rows) ([]ports.StoredItem, error) {
 	var items []ports.StoredItem
 	for rows.Next() {
@@ -255,6 +297,16 @@ create table if not exists sessions (
   user_id text not null references users(id) on delete cascade,
   expires_at timestamptz not null
 );
+
+create table if not exists api_tokens (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  name text not null,
+  token_hash text not null unique,
+  created_at timestamptz not null
+);
+
+create index if not exists api_tokens_user_idx on api_tokens (user_id);
 `
 
 func ParseTags(raw string) []string {
