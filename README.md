@@ -2,6 +2,12 @@
 
 A minimalist, privacy-focused bookmarking application inspired by Bearblog.
 
+
+
+https://github.com/user-attachments/assets/f1d52ab6-43eb-4f9c-8c1e-589bdc2290ef
+
+
+
 ## Disclaimers
 
 **On AI-assisted development:** Potpuri is being developed with Codex and Claude Code. I try to keep the scope of the project narrow and avoid frontend frameworks. The backend is written in Go, which has a low keyword set and relies mostly on its standard library — this hopefully makes it harder for LLMs to jumble things up. I think LLMs make it more pleasant to follow the TDD paradigm, so I always start with failing tests and then implement the actual features. As the project matures, LLM-reliance will decrease over time.
