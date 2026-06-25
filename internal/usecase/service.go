@@ -23,32 +23,78 @@ var (
 	ErrNotFound           = errors.New("not found")
 )
 
+// Quotas defines per-tier upload and API token limits.
+type Quotas struct {
+	FreeMaxFileSizeBytes   int64
+	FreeMaxStorageBytes    int64
+	FreeMaxAPITokens       int
+	PatronMaxFileSizeBytes int64
+	PatronMaxStorageBytes  int64
+}
+
+// DefaultQuotas are the live production limits.
+var DefaultQuotas = Quotas{
+	FreeMaxFileSizeBytes:   25 * 1024 * 1024,
+	FreeMaxStorageBytes:    250 * 1024 * 1024,
+	FreeMaxAPITokens:       1,
+	PatronMaxFileSizeBytes: 100 * 1024 * 1024,
+	PatronMaxStorageBytes:  5 * 1024 * 1024 * 1024,
+}
+
+type quota struct {
+	maxFileSizeBytes int64 // 0 = unlimited
+	maxStorageBytes  int64 // 0 = unlimited
+	maxAPITokens     int   // 0 = unlimited
+}
+
+func (q Quotas) forUser(patron bool) quota {
+	if patron {
+		return quota{q.PatronMaxFileSizeBytes, q.PatronMaxStorageBytes, 0}
+	}
+	return quota{q.FreeMaxFileSizeBytes, q.FreeMaxStorageBytes, q.FreeMaxAPITokens}
+}
+
+func formatBytes(b int64) string {
+	switch {
+	case b >= 1024*1024*1024:
+		return fmt.Sprintf("%.0f GB", float64(b)/(1024*1024*1024))
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.0f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.0f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 type Service struct {
-	users          ports.UserRepository
-	items          ports.ItemRepository
-	blobs          ports.BlobRepository
-	blobContent    ports.BlobContentStore
-	sessions       ports.SessionRepository
-	apiTokens      ports.APITokenRepository
+	users           ports.UserRepository
+	items           ports.ItemRepository
+	blobs           ports.BlobRepository
+	blobContent     ports.BlobContentStore
+	sessions        ports.SessionRepository
+	apiTokens       ports.APITokenRepository
 	preauthSessions ports.PreauthSessionRepository
-	recoveries     ports.TOTPRecoveryRepository
-	cipher         ports.ItemCipher
-	hasher         ports.PasswordHasher
-	now            func() time.Time
+	recoveries      ports.TOTPRecoveryRepository
+	cipher          ports.ItemCipher
+	hasher          ports.PasswordHasher
+	now             func() time.Time
+	quotas          Quotas
 }
 
 type NewServiceParams struct {
-	Users          ports.UserRepository
-	Items          ports.ItemRepository
-	Blobs          ports.BlobRepository
-	BlobContent    ports.BlobContentStore
-	Sessions       ports.SessionRepository
-	APITokens      ports.APITokenRepository
+	Users           ports.UserRepository
+	Items           ports.ItemRepository
+	Blobs           ports.BlobRepository
+	BlobContent     ports.BlobContentStore
+	Sessions        ports.SessionRepository
+	APITokens       ports.APITokenRepository
 	PreauthSessions ports.PreauthSessionRepository
-	Recoveries     ports.TOTPRecoveryRepository
-	Cipher         ports.ItemCipher
-	Hasher         ports.PasswordHasher
-	Now            func() time.Time
+	Recoveries      ports.TOTPRecoveryRepository
+	Cipher          ports.ItemCipher
+	Hasher          ports.PasswordHasher
+	Now             func() time.Time
+	Quotas          *Quotas // nil means DefaultQuotas
 }
 
 func NewService(params NewServiceParams) *Service {
@@ -80,6 +126,10 @@ func NewService(params NewServiceParams) *Service {
 			recoveries = repo
 		}
 	}
+	quotas := DefaultQuotas
+	if params.Quotas != nil {
+		quotas = *params.Quotas
+	}
 	return &Service{
 		users:           params.Users,
 		items:           params.Items,
@@ -92,6 +142,7 @@ func NewService(params NewServiceParams) *Service {
 		cipher:          params.Cipher,
 		hasher:          params.Hasher,
 		now:             now,
+		quotas:          quotas,
 	}
 }
 
@@ -348,6 +399,20 @@ func (s *Service) CreateAPIToken(ctx context.Context, input CreateAPITokenInput)
 	if len(name) > 80 {
 		name = name[:80]
 	}
+	user, err := s.users.FindUserByID(ctx, input.UserID)
+	if err != nil {
+		return CreateAPITokenResult{}, ErrUnauthorized
+	}
+	q := s.quotas.forUser(user.Patron)
+	if q.maxAPITokens > 0 {
+		existing, err := s.apiTokens.ListAPITokens(ctx, input.UserID)
+		if err != nil {
+			return CreateAPITokenResult{}, err
+		}
+		if len(existing) >= q.maxAPITokens {
+			return CreateAPITokenResult{}, fmt.Errorf("your account is limited to %d API token(s); upgrade to Patron for unlimited keys", q.maxAPITokens)
+		}
+	}
 	raw := "ptk_" + randomToken()
 	stored := ports.StoredAPIToken{
 		ID:        newID("tok"),
@@ -417,6 +482,9 @@ type BlobInput struct {
 func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain.Item, error) {
 	if input.UserID == "" {
 		return domain.Item{}, ErrUnauthorized
+	}
+	if err := s.validateBlobQuota(ctx, input.UserID, input.Blobs); err != nil {
+		return domain.Item{}, err
 	}
 	if input.Type == "" {
 		input.Type = domain.ItemTypeNote
@@ -496,6 +564,9 @@ func (s *Service) GetItem(ctx context.Context, userID, itemID string) (domain.It
 func (s *Service) UpdateItem(ctx context.Context, input UpdateItemInput) (domain.Item, error) {
 	if input.UserID == "" {
 		return domain.Item{}, ErrUnauthorized
+	}
+	if err := s.validateBlobQuota(ctx, input.UserID, input.Blobs); err != nil {
+		return domain.Item{}, err
 	}
 	input.ID = strings.TrimSpace(input.ID)
 	if input.ID == "" {
@@ -586,6 +657,48 @@ func (s *Service) GetBlob(ctx context.Context, userID, blobID string) (domain.Bl
 		Size:        stored.Size,
 		CreatedAt:   stored.CreatedAt,
 	}, content, nil
+}
+
+func (s *Service) validateBlobQuota(ctx context.Context, userID string, inputs []BlobInput) error {
+	if s.blobs == nil || len(inputs) == 0 {
+		return nil
+	}
+	var active []BlobInput
+	for _, in := range inputs {
+		if len(in.Content) > 0 {
+			active = append(active, in)
+		}
+	}
+	if len(active) == 0 {
+		return nil
+	}
+	user, err := s.users.FindUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	q := s.quotas.forUser(user.Patron)
+	if q.maxFileSizeBytes > 0 {
+		for _, in := range active {
+			if int64(len(in.Content)) > q.maxFileSizeBytes {
+				return fmt.Errorf("%s is %s, exceeding the %s per-file limit for your account",
+					in.Filename, formatBytes(int64(len(in.Content))), formatBytes(q.maxFileSizeBytes))
+			}
+		}
+	}
+	if q.maxStorageBytes > 0 {
+		used, err := s.blobs.TotalBlobSize(ctx, userID)
+		if err != nil {
+			return err
+		}
+		var incoming int64
+		for _, in := range active {
+			incoming += int64(len(in.Content))
+		}
+		if used+incoming > q.maxStorageBytes {
+			return fmt.Errorf("this upload would exceed your storage quota of %s", formatBytes(q.maxStorageBytes))
+		}
+	}
+	return nil
 }
 
 func (s *Service) createBlobs(ctx context.Context, item domain.Item, inputs []BlobInput) error {

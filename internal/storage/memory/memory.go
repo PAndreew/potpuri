@@ -64,6 +64,19 @@ func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, e
 	return domain.User{}, errors.New("user not found")
 }
 
+func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == userID {
+			u.Patron = patron
+			s.users[email] = u
+			return nil
+		}
+	}
+	return errors.New("user not found")
+}
+
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,6 +232,18 @@ func (s *Store) ListBlobs(ctx context.Context, userID string, itemID string) ([]
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+func (s *Store) TotalBlobSize(ctx context.Context, userID string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var total int64
+	for _, blob := range s.blobs {
+		if blob.UserID == userID {
+			total += blob.Size
+		}
+	}
+	return total, nil
 }
 
 func (s *Store) DeleteBlobsForItem(ctx context.Context, userID string, itemID string) error {

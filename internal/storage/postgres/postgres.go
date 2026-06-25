@@ -41,8 +41,9 @@ func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
 func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	var user domain.User
 	var totpEnabled sql.NullBool
-	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, coalesce(totp_enabled, false), created_at from users where email = $1`, email).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.CreatedAt)
+	err := s.db.QueryRowContext(ctx,
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at from users where email = $1`, email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
@@ -50,10 +51,16 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, error) {
 	var user domain.User
 	var totpEnabled sql.NullBool
-	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, coalesce(totp_enabled, false), created_at from users where id = $1`, userID).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.CreatedAt)
+	err := s.db.QueryRowContext(ctx,
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at from users where id = $1`, userID).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
+}
+
+func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {
+	_, err := s.db.ExecContext(ctx, `update users set patron = $2 where id = $1`, userID, patron)
+	return err
 }
 
 func (s *Store) StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error {
@@ -283,6 +290,12 @@ func (s *Store) DeleteBlobsForItem(ctx context.Context, userID string, itemID st
 	return err
 }
 
+func (s *Store) TotalBlobSize(ctx context.Context, userID string) (int64, error) {
+	var total int64
+	err := s.db.QueryRowContext(ctx, `select coalesce(sum(size_bytes), 0) from blobs where user_id = $1`, userID).Scan(&total)
+	return total, err
+}
+
 func (s *Store) CreateSession(ctx context.Context, session ports.Session) error {
 	_, err := s.db.ExecContext(ctx, `insert into sessions (token_hash, user_id, expires_at) values ($1, $2, $3)`, session.TokenHash, session.UserID, session.ExpiresAt)
 	return err
@@ -423,6 +436,7 @@ create index if not exists api_tokens_user_idx on api_tokens (user_id);
 
 do $$ begin alter table users add column totp_secret_ciphertext bytea; exception when others then null; end $$;
 do $$ begin alter table users add column totp_enabled boolean not null default false; exception when others then null; end $$;
+do $$ begin alter table users add column patron boolean not null default false; exception when others then null; end $$;
 
 create table if not exists preauth_sessions (
   token_hash text primary key,

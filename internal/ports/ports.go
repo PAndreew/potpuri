@@ -12,6 +12,7 @@ type UserRepository interface {
 	FindUserByEmail(ctx context.Context, email string) (domain.User, error)
 	FindUserByID(ctx context.Context, userID string) (domain.User, error)
 	DeleteUser(ctx context.Context, userID string) error
+	SetPatron(ctx context.Context, userID string, patron bool) error
 	StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error
 	ActivateTOTP(ctx context.Context, userID string) error
 	DisableTOTP(ctx context.Context, userID string) error
@@ -50,6 +51,7 @@ type BlobRepository interface {
 	FindBlob(ctx context.Context, userID string, blobID string) (StoredBlob, error)
 	ListBlobs(ctx context.Context, userID string, itemID string) ([]StoredBlob, error)
 	DeleteBlobsForItem(ctx context.Context, userID string, itemID string) error
+	TotalBlobSize(ctx context.Context, userID string) (int64, error)
 }
 
 type SessionRepository interface {

@@ -807,7 +807,8 @@ func uploadedFiles(r *http.Request) ([]usecase.BlobInput, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		content, readErr := io.ReadAll(io.LimitReader(file, 32<<20+1))
+		const httpUploadCap = 100 * 1024 * 1024 // patron max; use-case enforces per-tier limits
+		content, readErr := io.ReadAll(io.LimitReader(file, httpUploadCap+1))
 		closeErr := file.Close()
 		if readErr != nil {
 			return nil, "", readErr
@@ -815,8 +816,8 @@ func uploadedFiles(r *http.Request) ([]usecase.BlobInput, string, error) {
 		if closeErr != nil {
 			return nil, "", closeErr
 		}
-		if len(content) > 32<<20 {
-			return nil, "", fmt.Errorf("%s is larger than 32MB", header.Filename)
+		if len(content) > httpUploadCap {
+			return nil, "", fmt.Errorf("%s exceeds the maximum upload size of 100 MB", header.Filename)
 		}
 		contentType := header.Header.Get("Content-Type")
 		if contentType == "" {

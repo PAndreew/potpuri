@@ -7,5 +7,6 @@ type User struct {
 	Email        string
 	PasswordHash string
 	TOTPEnabled  bool
+	Patron       bool
 	CreatedAt    time.Time
 }
