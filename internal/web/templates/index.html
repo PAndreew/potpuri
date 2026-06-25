@@ -23,16 +23,17 @@
           <div class="item-body">{{renderBody .Body}}</div>
           {{range .Blobs}}
             {{if isImageBlob .ContentType}}
-              <figure class="uploaded-image-frame"><img class="uploaded-image" src="{{blobURL .ID}}" alt="{{.Filename}}"><figcaption>{{.Filename}}</figcaption></figure>
+              <figure class="uploaded-image-frame"><img class="uploaded-image" src="{{blobURL .ID}}" alt="{{.Filename}}"><figcaption>{{.Filename}} · <a href="{{blobDownloadURL .ID}}">Download</a></figcaption></figure>
             {{else}}
-              <p><a href="{{blobURL .ID}}">{{.Filename}}</a></p>
+              <p><a href="{{blobDownloadURL .ID}}">{{.Filename}}</a></p>
             {{end}}
           {{end}}
           <div class="actions">
             <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
+            <button class="ghost" onclick="navigator.clipboard.writeText(this.dataset.copy).then(()=>{var t=this.textContent;this.textContent='Copied!';setTimeout(()=>this.textContent=t,1500)}).catch(()=>{})" data-copy="{{.Title}}{{if .Body}}&#10;&#10;{{editableText .Body}}{{end}}">Copy</button>
             <form method="post" action="/items/delete">
-            <input type="hidden" name="id" value="{{.ID}}">
-              <button class="ghost">Delete</button>
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button class="danger-text">Delete</button>
             </form>
           </div>
         </div>

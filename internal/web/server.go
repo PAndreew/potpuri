@@ -31,12 +31,19 @@ var roseSVG []byte
 var templatesFS embed.FS
 
 var templateFuncs = template.FuncMap{
-	"renderBody":  renderBody,
-	"isImageBlob": isImageBlob,
-	"blobURL":     blobURL,
-	"joinTags":    joinTags,
-	"snippet":     snippet,
-	"fmtDate":     fmtDate,
+	"renderBody":      renderBody,
+	"isImageBlob":     isImageBlob,
+	"blobURL":         blobURL,
+	"blobDownloadURL": blobDownloadURL,
+	"joinTags":        joinTags,
+	"snippet":         snippet,
+	"fmtDate":         fmtDate,
+	"editableText":    editableText,
+}
+
+func editableText(body string) string {
+	text, _ := splitUploadedFiles(body)
+	return text
 }
 
 type Server struct {
@@ -331,6 +338,10 @@ func (s *Server) blobHTML(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
+	}
+	if r.URL.Query().Get("download") == "1" {
+		safe := strings.ReplaceAll(blob.Filename, `"`, "_")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+safe+`"`)
 	}
 	w.Header().Set("Content-Type", blob.ContentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -979,6 +990,10 @@ func isImageBlob(contentType string) bool {
 
 func blobURL(blobID string) string {
 	return "/items/blob?id=" + template.URLQueryEscaper(blobID)
+}
+
+func blobDownloadURL(blobID string) string {
+	return "/items/blob?id=" + template.URLQueryEscaper(blobID) + "&download=1"
 }
 
 func manifest(w http.ResponseWriter, r *http.Request) {
