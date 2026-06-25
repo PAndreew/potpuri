@@ -21,25 +21,27 @@ var (
 )
 
 type Service struct {
-	users     ports.UserRepository
-	items     ports.ItemRepository
-	blobs     ports.BlobRepository
-	sessions  ports.SessionRepository
-	apiTokens ports.APITokenRepository
-	cipher    ports.ItemCipher
-	hasher    ports.PasswordHasher
-	now       func() time.Time
+	users       ports.UserRepository
+	items       ports.ItemRepository
+	blobs       ports.BlobRepository
+	blobContent ports.BlobContentStore
+	sessions    ports.SessionRepository
+	apiTokens   ports.APITokenRepository
+	cipher      ports.ItemCipher
+	hasher      ports.PasswordHasher
+	now         func() time.Time
 }
 
 type NewServiceParams struct {
-	Users     ports.UserRepository
-	Items     ports.ItemRepository
-	Blobs     ports.BlobRepository
-	Sessions  ports.SessionRepository
-	APITokens ports.APITokenRepository
-	Cipher    ports.ItemCipher
-	Hasher    ports.PasswordHasher
-	Now       func() time.Time
+	Users       ports.UserRepository
+	Items       ports.ItemRepository
+	Blobs       ports.BlobRepository
+	BlobContent ports.BlobContentStore
+	Sessions    ports.SessionRepository
+	APITokens   ports.APITokenRepository
+	Cipher      ports.ItemCipher
+	Hasher      ports.PasswordHasher
+	Now         func() time.Time
 }
 
 func NewService(params NewServiceParams) *Service {
@@ -60,14 +62,15 @@ func NewService(params NewServiceParams) *Service {
 		}
 	}
 	return &Service{
-		users:     params.Users,
-		items:     params.Items,
-		blobs:     blobs,
-		sessions:  params.Sessions,
-		apiTokens: apiTokens,
-		cipher:    params.Cipher,
-		hasher:    params.Hasher,
-		now:       now,
+		users:       params.Users,
+		items:       params.Items,
+		blobs:       blobs,
+		blobContent: params.BlobContent,
+		sessions:    params.Sessions,
+		apiTokens:   apiTokens,
+		cipher:      params.Cipher,
+		hasher:      params.Hasher,
+		now:         now,
 	}
 }
 
@@ -368,7 +371,14 @@ func (s *Service) GetBlob(ctx context.Context, userID, blobID string) (domain.Bl
 	if err != nil {
 		return domain.Blob{}, nil, err
 	}
-	content, err := s.cipher.OpenBytes(stored.Ciphertext)
+	ciphertext := stored.Ciphertext
+	if len(ciphertext) == 0 && s.blobContent != nil {
+		ciphertext, err = s.blobContent.GetBlobContent(ctx, stored.ID)
+		if err != nil {
+			return domain.Blob{}, nil, err
+		}
+	}
+	content, err := s.cipher.OpenBytes(ciphertext)
 	if err != nil {
 		return domain.Blob{}, nil, err
 	}
@@ -399,16 +409,24 @@ func (s *Service) createBlobs(ctx context.Context, item domain.Item, inputs []Bl
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		if err := s.blobs.CreateBlob(ctx, ports.StoredBlob{
-			ID:          newID("blb"),
+		blobID := newID("blb")
+		stored := ports.StoredBlob{
+			ID:          blobID,
 			UserID:      item.UserID,
 			ItemID:      item.ID,
 			Filename:    strings.TrimSpace(input.Filename),
 			ContentType: contentType,
 			Size:        int64(len(input.Content)),
-			Ciphertext:  ciphertext,
 			CreatedAt:   item.CreatedAt,
-		}); err != nil {
+		}
+		if s.blobContent != nil {
+			if err := s.blobContent.PutBlobContent(ctx, blobID, ciphertext); err != nil {
+				return err
+			}
+		} else {
+			stored.Ciphertext = ciphertext
+		}
+		if err := s.blobs.CreateBlob(ctx, stored); err != nil {
 			return err
 		}
 	}

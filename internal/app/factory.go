@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 
+	"potpuri/internal/ports"
 	"potpuri/internal/security"
 	"potpuri/internal/storage/postgres"
+	"potpuri/internal/storage/r2"
 	"potpuri/internal/usecase"
 	"potpuri/internal/web"
 )
@@ -19,6 +21,10 @@ type Factory struct {
 	SessionSecret     string
 	AllowRegistration bool
 	SecureCookies     bool
+	R2AccountID       string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2Bucket          string
 }
 
 func FactoryFromEnv() Factory {
@@ -29,6 +35,10 @@ func FactoryFromEnv() Factory {
 		SessionSecret:     os.Getenv("POTPURI_SESSION_SECRET"),
 		AllowRegistration: envBool("POTPURI_ALLOW_REGISTRATION", false),
 		SecureCookies:     envBool("POTPURI_SECURE_COOKIES", true),
+		R2AccountID:       os.Getenv("R2_ACCOUNT_ID"),
+		R2AccessKeyID:     os.Getenv("R2_ACCESS_KEY_ID"),
+		R2SecretAccessKey: os.Getenv("R2_SECRET_ACCESS_KEY"),
+		R2Bucket:          os.Getenv("R2_BUCKET"),
 	}
 }
 
@@ -52,13 +62,23 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		_ = store.Close()
 		return nil, nil, err
 	}
+	var blobContent ports.BlobContentStore
+	if f.R2AccountID != "" && f.R2AccessKeyID != "" && f.R2SecretAccessKey != "" && f.R2Bucket != "" {
+		blobContent = r2.Open(r2.Config{
+			AccountID:       f.R2AccountID,
+			AccessKeyID:     f.R2AccessKeyID,
+			SecretAccessKey: f.R2SecretAccessKey,
+			Bucket:          f.R2Bucket,
+		})
+	}
 	svc := usecase.NewService(usecase.NewServiceParams{
-		Users:    store,
-		Items:    store,
-		Blobs:    store,
-		Sessions: store,
-		Cipher:   cipher,
-		Hasher:   security.NewPasswordHasher(),
+		Users:       store,
+		Items:       store,
+		Blobs:       store,
+		BlobContent: blobContent,
+		Sessions:    store,
+		Cipher:      cipher,
+		Hasher:      security.NewPasswordHasher(),
 	})
 	handler := web.NewServerWithConfig(svc, web.Config{
 		AllowRegistration: f.AllowRegistration,

@@ -136,19 +136,25 @@ func (s *Store) DeleteItem(ctx context.Context, userID string, itemID string) er
 }
 
 func (s *Store) CreateBlob(ctx context.Context, blob ports.StoredBlob) error {
+	var ciphertext interface{}
+	if len(blob.Ciphertext) > 0 {
+		ciphertext = blob.Ciphertext
+	}
 	_, err := s.db.ExecContext(ctx, `
 insert into blobs (id, user_id, item_id, filename, content_type, size_bytes, ciphertext, created_at)
 values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		blob.ID, blob.UserID, blob.ItemID, blob.Filename, blob.ContentType, blob.Size, blob.Ciphertext, blob.CreatedAt)
+		blob.ID, blob.UserID, blob.ItemID, blob.Filename, blob.ContentType, blob.Size, ciphertext, blob.CreatedAt)
 	return err
 }
 
 func (s *Store) FindBlob(ctx context.Context, userID string, blobID string) (ports.StoredBlob, error) {
 	var blob ports.StoredBlob
+	var ciphertext []byte
 	err := s.db.QueryRowContext(ctx, `
 select id, user_id, item_id, filename, content_type, size_bytes, ciphertext, created_at
 from blobs where user_id = $1 and id = $2`, userID, blobID).
-		Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &blob.Ciphertext, &blob.CreatedAt)
+		Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &ciphertext, &blob.CreatedAt)
+	blob.Ciphertext = ciphertext
 	return blob, err
 }
 
@@ -163,9 +169,11 @@ from blobs where user_id = $1 and item_id = $2 order by created_at asc`, userID,
 	var blobs []ports.StoredBlob
 	for rows.Next() {
 		var blob ports.StoredBlob
-		if err := rows.Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &blob.Ciphertext, &blob.CreatedAt); err != nil {
+		var ciphertext []byte
+		if err := rows.Scan(&blob.ID, &blob.UserID, &blob.ItemID, &blob.Filename, &blob.ContentType, &blob.Size, &ciphertext, &blob.CreatedAt); err != nil {
 			return nil, err
 		}
+		blob.Ciphertext = ciphertext
 		blobs = append(blobs, blob)
 	}
 	return blobs, rows.Err()
@@ -286,9 +294,15 @@ create table if not exists blobs (
   filename text not null,
   content_type text not null,
   size_bytes bigint not null,
-  ciphertext bytea not null,
+  ciphertext bytea,
   created_at timestamptz not null
 );
+
+-- allow existing deployments that had NOT NULL to accept NULL ciphertext for R2-backed blobs
+do $$ begin
+  alter table blobs alter column ciphertext drop not null;
+exception when others then null;
+end $$;
 
 create index if not exists blobs_user_item_idx on blobs (user_id, item_id);
 

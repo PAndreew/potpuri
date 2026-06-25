@@ -41,6 +41,14 @@ type APITokenRepository interface {
 	DeleteAPIToken(ctx context.Context, userID string, tokenID string) error
 }
 
+// BlobContentStore holds encrypted blob bytes externally (e.g. Cloudflare R2).
+// When nil, the service falls back to ciphertext stored in the blob row itself.
+type BlobContentStore interface {
+	PutBlobContent(ctx context.Context, blobID string, ciphertext []byte) error
+	GetBlobContent(ctx context.Context, blobID string) ([]byte, error)
+	DeleteBlobContent(ctx context.Context, blobID string) error
+}
+
 type StoredItem struct {
 	ID              string
 	UserID          string
