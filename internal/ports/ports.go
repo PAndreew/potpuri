@@ -10,6 +10,8 @@ import (
 type UserRepository interface {
 	CreateUser(ctx context.Context, user domain.User) error
 	FindUserByEmail(ctx context.Context, email string) (domain.User, error)
+	FindUserByID(ctx context.Context, userID string) (domain.User, error)
+	DeleteUser(ctx context.Context, userID string) error
 }
 
 type ItemRepository interface {

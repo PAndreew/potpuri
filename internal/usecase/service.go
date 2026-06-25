@@ -114,6 +114,27 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 	return token, nil
 }
 
+func (s *Service) GetUser(ctx context.Context, userID string) (domain.User, error) {
+	if userID == "" {
+		return domain.User{}, ErrUnauthorized
+	}
+	return s.users.FindUserByID(ctx, userID)
+}
+
+func (s *Service) DeleteAccount(ctx context.Context, userID, password string) error {
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	user, err := s.users.FindUserByID(ctx, userID)
+	if err != nil {
+		return ErrUnauthorized
+	}
+	if !s.hasher.Verify(user.PasswordHash, password) {
+		return fmt.Errorf("incorrect password")
+	}
+	return s.users.DeleteUser(ctx, userID)
+}
+
 func (s *Service) UserIDForSession(ctx context.Context, token string) (string, error) {
 	if token == "" {
 		return "", ErrUnauthorized

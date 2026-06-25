@@ -47,6 +47,58 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 	return user, nil
 }
 
+func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, u := range s.users {
+		if u.ID == userID {
+			return u, nil
+		}
+	}
+	return domain.User{}, errors.New("user not found")
+}
+
+func (s *Store) DeleteUser(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var email string
+	for e, u := range s.users {
+		if u.ID == userID {
+			email = e
+			break
+		}
+	}
+	if email == "" {
+		return errors.New("user not found")
+	}
+	delete(s.users, email)
+	var items []ports.StoredItem
+	var blobs []ports.StoredBlob
+	for _, item := range s.items {
+		if item.UserID != userID {
+			items = append(items, item)
+		}
+	}
+	for _, blob := range s.blobs {
+		if blob.UserID != userID {
+			blobs = append(blobs, blob)
+		}
+	}
+	s.items = items
+	s.blobs = blobs
+	for hash, sess := range s.sessions {
+		if sess.UserID == userID {
+			delete(s.sessions, hash)
+		}
+	}
+	for hash, tok := range s.apiTokens {
+		if tok.UserID == userID {
+			delete(s.apiTokens, hash)
+		}
+	}
+	return nil
+}
+
 func (s *Store) CreateItem(ctx context.Context, item ports.StoredItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

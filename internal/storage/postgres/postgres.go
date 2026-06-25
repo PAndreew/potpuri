@@ -44,6 +44,24 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 	return user, err
 }
 
+func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, error) {
+	var user domain.User
+	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, created_at from users where id = $1`, userID).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	return user, err
+}
+
+func (s *Store) DeleteUser(ctx context.Context, userID string) error {
+	result, err := s.db.ExecContext(ctx, `delete from users where id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 func (s *Store) CreateItem(ctx context.Context, item ports.StoredItem) error {
 	if item.SearchTokens == nil {
 		item.SearchTokens = []string{}

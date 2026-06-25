@@ -46,6 +46,7 @@ type Server struct {
 	addTpl      *template.Template
 	editTpl     *template.Template
 	tokensTpl   *template.Template
+	accountTpl  *template.Template
 	config      Config
 }
 
@@ -67,6 +68,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		addTpl:      parsePage("add.html"),
 		editTpl:     parsePage("edit.html"),
 		tokensTpl:   parsePage("tokens.html"),
+		accountTpl:  parsePage("account.html"),
 		config:      config,
 	}
 }
@@ -93,6 +95,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/share", s.shareHTML)
+	mux.HandleFunc("/account", s.accountHTML)
+	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
+	mux.HandleFunc("/export", s.exportHandler)
 	mux.HandleFunc("/tokens", s.tokensHTML)
 	mux.HandleFunc("/tokens/revoke", s.revokeTokenHTML)
 	mux.HandleFunc("/items", s.createItemHTML)
@@ -402,6 +407,87 @@ func (s *Server) currentUserID(r *http.Request) (string, error) {
 		return s.svc.UserIDForAPIToken(r.Context(), strings.TrimPrefix(auth, "Bearer "))
 	}
 	return "", errors.New("not authenticated")
+}
+
+func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	user, err := s.svc.GetUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = s.accountTpl.Execute(w, map[string]any{
+		"UserID":      userID,
+		"Email":       user.Email,
+		"TOTPEnabled": false,
+	})
+}
+
+func (s *Server) deleteAccountHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := s.svc.DeleteAccount(r.Context(), userID, r.FormValue("password")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteStrictMode})
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) exportHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	items, err := s.svc.ListItems(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if r.URL.Query().Get("format") == "bookmarks" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="potpuri-bookmarks.html"`)
+		writeNetscapeBookmarks(w, items)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="potpuri-export.json"`)
+	_ = json.NewEncoder(w).Encode(items)
+}
+
+func writeNetscapeBookmarks(w io.Writer, items []domain.Item) {
+	fmt.Fprintln(w, `<!DOCTYPE NETSCAPE-Bookmark-file-1>`)
+	fmt.Fprintln(w, `<!-- This is an automatically generated file. -->`)
+	fmt.Fprintln(w, `<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">`)
+	fmt.Fprintln(w, `<TITLE>Bookmarks</TITLE>`)
+	fmt.Fprintln(w, `<H1>Bookmarks from Potpuri</H1>`)
+	fmt.Fprintln(w, `<DL><p>`)
+	for _, item := range items {
+		if item.SourceURL == "" {
+			continue
+		}
+		fmt.Fprintf(w, "    <DT><A HREF=%q ADD_DATE=%q>%s</A>\n",
+			item.SourceURL,
+			fmt.Sprintf("%d", item.CreatedAt.Unix()),
+			template.HTMLEscapeString(item.Title))
+	}
+	fmt.Fprintln(w, `</DL><p>`)
 }
 
 func (s *Server) shareHTML(w http.ResponseWriter, r *http.Request) {

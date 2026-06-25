@@ -1,0 +1,41 @@
+{{define "title"}}Account - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/">Back to items</a>
+  <h2>Account</h2>
+
+  <section>
+    <p>Signed in as <strong>{{.Email}}</strong></p>
+    <h3>Export your data</h3>
+    <p>
+      <a class="button" href="/export">Download JSON</a>
+      <a class="button" href="/export?format=bookmarks">Download Bookmarks HTML</a>
+    </p>
+  </section>
+
+  <section>
+    <h3>Two-factor authentication</h3>
+    {{if .TOTPEnabled}}
+      <p>2FA is <strong>enabled</strong>.</p>
+      <form method="post" action="/account/2fa/disable">
+        <input type="password" name="code" placeholder="Enter current TOTP code to disable" required>
+        <button class="ghost">Disable 2FA</button>
+      </form>
+    {{else}}
+      <p>2FA is disabled.</p>
+      <form method="post" action="/account/2fa/setup">
+        <button>Enable 2FA</button>
+      </form>
+    {{end}}
+  </section>
+
+  <section class="danger-zone">
+    <h3>Delete account</h3>
+    <p>Permanently deletes your account and all saved data. Cannot be undone.</p>
+    <form method="post" action="/account/delete">
+      <input type="password" name="password" placeholder="Confirm your password" required autocomplete="current-password">
+      <button class="ghost danger">Delete my account</button>
+    </form>
+  </section>
+  {{template "sw-script" .}}
+{{end}}
