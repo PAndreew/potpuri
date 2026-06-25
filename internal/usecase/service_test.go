@@ -149,11 +149,11 @@ func TestLoginCreatesUsableSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(ctx, "login@example.com", "correct horse")
+	loginResult, err := svc.Login(ctx, "login@example.com", "correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
-	userID, err := svc.UserIDForSession(ctx, token)
+	userID, err := svc.UserIDForSession(ctx, loginResult.SessionToken)
 	if err != nil {
 		t.Fatal(err)
 	}

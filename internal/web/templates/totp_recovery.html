@@ -1,0 +1,12 @@
+{{define "title"}}Recovery codes - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/account">Back to account</a>
+  <h2>2FA enabled — save your recovery codes</h2>
+  <p>Store these somewhere safe. Each code can only be used once if you lose access to your authenticator.</p>
+  <ul style="list-style:none;padding:0;font-family:monospace;font-size:1.1rem;line-height:2">
+    {{range .Codes}}<li><code>{{.}}</code></li>{{end}}
+  </ul>
+  <p><a class="button" href="/account">Done</a></p>
+  {{template "sw-script" .}}
+{{end}}

@@ -7,8 +7,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/pquerna/otp/totp"
 
 	"potpuri/internal/domain"
 	"potpuri/internal/ports"
@@ -21,27 +24,31 @@ var (
 )
 
 type Service struct {
-	users       ports.UserRepository
-	items       ports.ItemRepository
-	blobs       ports.BlobRepository
-	blobContent ports.BlobContentStore
-	sessions    ports.SessionRepository
-	apiTokens   ports.APITokenRepository
-	cipher      ports.ItemCipher
-	hasher      ports.PasswordHasher
-	now         func() time.Time
+	users          ports.UserRepository
+	items          ports.ItemRepository
+	blobs          ports.BlobRepository
+	blobContent    ports.BlobContentStore
+	sessions       ports.SessionRepository
+	apiTokens      ports.APITokenRepository
+	preauthSessions ports.PreauthSessionRepository
+	recoveries     ports.TOTPRecoveryRepository
+	cipher         ports.ItemCipher
+	hasher         ports.PasswordHasher
+	now            func() time.Time
 }
 
 type NewServiceParams struct {
-	Users       ports.UserRepository
-	Items       ports.ItemRepository
-	Blobs       ports.BlobRepository
-	BlobContent ports.BlobContentStore
-	Sessions    ports.SessionRepository
-	APITokens   ports.APITokenRepository
-	Cipher      ports.ItemCipher
-	Hasher      ports.PasswordHasher
-	Now         func() time.Time
+	Users          ports.UserRepository
+	Items          ports.ItemRepository
+	Blobs          ports.BlobRepository
+	BlobContent    ports.BlobContentStore
+	Sessions       ports.SessionRepository
+	APITokens      ports.APITokenRepository
+	PreauthSessions ports.PreauthSessionRepository
+	Recoveries     ports.TOTPRecoveryRepository
+	Cipher         ports.ItemCipher
+	Hasher         ports.PasswordHasher
+	Now            func() time.Time
 }
 
 func NewService(params NewServiceParams) *Service {
@@ -61,16 +68,30 @@ func NewService(params NewServiceParams) *Service {
 			apiTokens = repo
 		}
 	}
+	preauthSessions := params.PreauthSessions
+	if preauthSessions == nil {
+		if repo, ok := params.Sessions.(ports.PreauthSessionRepository); ok {
+			preauthSessions = repo
+		}
+	}
+	recoveries := params.Recoveries
+	if recoveries == nil {
+		if repo, ok := params.Sessions.(ports.TOTPRecoveryRepository); ok {
+			recoveries = repo
+		}
+	}
 	return &Service{
-		users:       params.Users,
-		items:       params.Items,
-		blobs:       blobs,
-		blobContent: params.BlobContent,
-		sessions:    params.Sessions,
-		apiTokens:   apiTokens,
-		cipher:      params.Cipher,
-		hasher:      params.Hasher,
-		now:         now,
+		users:           params.Users,
+		items:           params.Items,
+		blobs:           blobs,
+		blobContent:     params.BlobContent,
+		sessions:        params.Sessions,
+		apiTokens:       apiTokens,
+		preauthSessions: preauthSessions,
+		recoveries:      recoveries,
+		cipher:          params.Cipher,
+		hasher:          params.Hasher,
+		now:             now,
 	}
 }
 
@@ -97,10 +118,28 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (domain.Use
 	return user, s.users.CreateUser(ctx, user)
 }
 
-func (s *Service) Login(ctx context.Context, email, password string) (string, error) {
+type LoginResult struct {
+	SessionToken string
+	PreauthToken string
+	RequiresTOTP bool
+}
+
+func (s *Service) Login(ctx context.Context, email, password string) (LoginResult, error) {
 	user, err := s.users.FindUserByEmail(ctx, strings.TrimSpace(strings.ToLower(email)))
 	if err != nil || !s.hasher.Verify(user.PasswordHash, password) {
-		return "", ErrInvalidCredentials
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	if user.TOTPEnabled && s.preauthSessions != nil {
+		raw := randomToken()
+		preauth := ports.StoredPreauthSession{
+			TokenHash: hashToken(raw),
+			UserID:    user.ID,
+			ExpiresAt: s.now().UTC().Add(5 * time.Minute),
+		}
+		if err := s.preauthSessions.CreatePreauthSession(ctx, preauth); err != nil {
+			return LoginResult{}, err
+		}
+		return LoginResult{PreauthToken: raw, RequiresTOTP: true}, nil
 	}
 	token := randomToken()
 	session := ports.Session{
@@ -109,9 +148,144 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 		ExpiresAt: s.now().UTC().Add(30 * 24 * time.Hour),
 	}
 	if err := s.sessions.CreateSession(ctx, session); err != nil {
+		return LoginResult{}, err
+	}
+	return LoginResult{SessionToken: token}, nil
+}
+
+var recoveryCodeRE = regexp.MustCompile(`^[A-Z2-9]{4}-[A-Z2-9]{4}$`)
+
+func (s *Service) SetupTOTP(ctx context.Context, userID string) (otpauthURI, secret string, err error) {
+	if userID == "" {
+		return "", "", ErrUnauthorized
+	}
+	user, err := s.users.FindUserByID(ctx, userID)
+	if err != nil {
+		return "", "", ErrUnauthorized
+	}
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Potpuri", AccountName: user.Email})
+	if err != nil {
+		return "", "", err
+	}
+	ciphertext, err := s.cipher.SealBytes([]byte(key.Secret()))
+	if err != nil {
+		return "", "", err
+	}
+	if err := s.users.StoreTOTPSecret(ctx, userID, ciphertext); err != nil {
+		return "", "", err
+	}
+	return key.URL(), key.Secret(), nil
+}
+
+func (s *Service) ConfirmTOTP(ctx context.Context, userID, secret, code string) ([]string, error) {
+	if userID == "" {
+		return nil, ErrUnauthorized
+	}
+	if !totp.Validate(code, secret) {
+		return nil, fmt.Errorf("invalid code")
+	}
+	if err := s.users.ActivateTOTP(ctx, userID); err != nil {
+		return nil, err
+	}
+	codes := make([]string, 10)
+	hashes := make([]string, 10)
+	for i := range codes {
+		plain := newRecoveryCode()
+		codes[i] = plain
+		hashes[i] = hashToken(plain)
+	}
+	if err := s.recoveries.StoreRecoveryCodes(ctx, userID, hashes); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *Service) DisableTOTP(ctx context.Context, userID, code string) error {
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	ciphertext, err := s.users.FindTOTPSecret(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("2FA not set up")
+	}
+	secretBytes, err := s.cipher.OpenBytes(ciphertext)
+	if err != nil {
+		return err
+	}
+	if !totp.Validate(code, string(secretBytes)) {
+		return fmt.Errorf("invalid code")
+	}
+	if err := s.users.DisableTOTP(ctx, userID); err != nil {
+		return err
+	}
+	return s.recoveries.DeleteRecoveryCodes(ctx, userID)
+}
+
+func (s *Service) UserIDForPreauthToken(ctx context.Context, token string) (string, error) {
+	if token == "" {
+		return "", ErrUnauthorized
+	}
+	preauth, err := s.preauthSessions.FindPreauthSession(ctx, hashToken(token))
+	if err != nil || !preauth.ExpiresAt.After(s.now().UTC()) {
+		return "", ErrUnauthorized
+	}
+	return preauth.UserID, nil
+}
+
+func (s *Service) CompleteLoginTOTP(ctx context.Context, preauthToken, code string) (string, error) {
+	userID, err := s.UserIDForPreauthToken(ctx, preauthToken)
+	if err != nil {
+		return "", ErrUnauthorized
+	}
+	ciphertext, err := s.users.FindTOTPSecret(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("2FA not configured")
+	}
+	secretBytes, err := s.cipher.OpenBytes(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	var valid bool
+	if recoveryCodeRE.MatchString(strings.ToUpper(strings.TrimSpace(code))) {
+		codeHash := hashToken(strings.ToUpper(strings.TrimSpace(code)))
+		valid, err = s.recoveries.FindAndConsumeRecoveryCode(ctx, userID, codeHash)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		valid = totp.Validate(strings.TrimSpace(code), string(secretBytes))
+	}
+	if !valid {
+		return "", fmt.Errorf("invalid code")
+	}
+	_ = s.preauthSessions.DeletePreauthSession(ctx, hashToken(preauthToken))
+	token := randomToken()
+	session := ports.Session{
+		TokenHash: hashToken(token),
+		UserID:    userID,
+		ExpiresAt: s.now().UTC().Add(30 * 24 * time.Hour),
+	}
+	if err := s.sessions.CreateSession(ctx, session); err != nil {
 		return "", err
 	}
 	return token, nil
+}
+
+func newRecoveryCode() string {
+	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	result := make([]byte, 9)
+	for i := 0; i < 4; i++ {
+		result[i] = chars[int(b[i])%len(chars)]
+	}
+	result[4] = '-'
+	for i := 0; i < 4; i++ {
+		result[5+i] = chars[int(b[4+i])%len(chars)]
+	}
+	return string(result)
 }
 
 func (s *Service) GetUser(ctx context.Context, userID string) (domain.User, error) {

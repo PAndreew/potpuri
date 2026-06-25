@@ -12,6 +12,28 @@ type UserRepository interface {
 	FindUserByEmail(ctx context.Context, email string) (domain.User, error)
 	FindUserByID(ctx context.Context, userID string) (domain.User, error)
 	DeleteUser(ctx context.Context, userID string) error
+	StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error
+	ActivateTOTP(ctx context.Context, userID string) error
+	DisableTOTP(ctx context.Context, userID string) error
+	FindTOTPSecret(ctx context.Context, userID string) ([]byte, error)
+}
+
+type StoredPreauthSession struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt time.Time
+}
+
+type PreauthSessionRepository interface {
+	CreatePreauthSession(ctx context.Context, session StoredPreauthSession) error
+	FindPreauthSession(ctx context.Context, tokenHash string) (StoredPreauthSession, error)
+	DeletePreauthSession(ctx context.Context, tokenHash string) error
+}
+
+type TOTPRecoveryRepository interface {
+	StoreRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error
+	FindAndConsumeRecoveryCode(ctx context.Context, userID string, codeHash string) (bool, error)
+	DeleteRecoveryCodes(ctx context.Context, userID string) error
 }
 
 type ItemRepository interface {

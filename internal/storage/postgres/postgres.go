@@ -40,14 +40,95 @@ func (s *Store) CreateUser(ctx context.Context, user domain.User) error {
 
 func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User, error) {
 	var user domain.User
-	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, created_at from users where email = $1`, email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	var totpEnabled sql.NullBool
+	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, coalesce(totp_enabled, false), created_at from users where email = $1`, email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.CreatedAt)
+	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
 
 func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, error) {
 	var user domain.User
-	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, created_at from users where id = $1`, userID).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.CreatedAt)
+	var totpEnabled sql.NullBool
+	err := s.db.QueryRowContext(ctx, `select id, email, password_hash, coalesce(totp_enabled, false), created_at from users where id = $1`, userID).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.CreatedAt)
+	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
+}
+
+func (s *Store) StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error {
+	_, err := s.db.ExecContext(ctx, `update users set totp_secret_ciphertext = $2 where id = $1`, userID, secretCiphertext)
+	return err
+}
+
+func (s *Store) ActivateTOTP(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `update users set totp_enabled = true where id = $1`, userID)
+	return err
+}
+
+func (s *Store) DisableTOTP(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `update users set totp_enabled = false, totp_secret_ciphertext = null where id = $1`, userID)
+	return err
+}
+
+func (s *Store) FindTOTPSecret(ctx context.Context, userID string) ([]byte, error) {
+	var ct []byte
+	err := s.db.QueryRowContext(ctx, `select totp_secret_ciphertext from users where id = $1`, userID).Scan(&ct)
+	if err != nil {
+		return nil, err
+	}
+	if ct == nil {
+		return nil, errors.New("no TOTP secret")
+	}
+	return ct, nil
+}
+
+func (s *Store) CreatePreauthSession(ctx context.Context, session ports.StoredPreauthSession) error {
+	_, err := s.db.ExecContext(ctx, `insert into preauth_sessions (token_hash, user_id, expires_at) values ($1, $2, $3)`,
+		session.TokenHash, session.UserID, session.ExpiresAt)
+	return err
+}
+
+func (s *Store) FindPreauthSession(ctx context.Context, tokenHash string) (ports.StoredPreauthSession, error) {
+	var ps ports.StoredPreauthSession
+	err := s.db.QueryRowContext(ctx, `select token_hash, user_id, expires_at from preauth_sessions where token_hash = $1`, tokenHash).
+		Scan(&ps.TokenHash, &ps.UserID, &ps.ExpiresAt)
+	return ps, err
+}
+
+func (s *Store) DeletePreauthSession(ctx context.Context, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx, `delete from preauth_sessions where token_hash = $1`, tokenHash)
+	return err
+}
+
+func (s *Store) StoreRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error {
+	_, err := s.db.ExecContext(ctx, `delete from totp_recovery_codes where user_id = $1`, userID)
+	if err != nil {
+		return err
+	}
+	for _, h := range codeHashes {
+		if _, err := s.db.ExecContext(ctx, `insert into totp_recovery_codes (id, user_id, code_hash) values ($1, $2, $3)`,
+			"rc_"+h[:8], userID, h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) FindAndConsumeRecoveryCode(ctx context.Context, userID string, codeHash string) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		`update totp_recovery_codes set used_at = now() where user_id = $1 and code_hash = $2 and used_at is null`,
+		userID, codeHash)
+	if err != nil {
+		return false, err
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
+}
+
+func (s *Store) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `delete from totp_recovery_codes where user_id = $1`, userID)
+	return err
 }
 
 func (s *Store) DeleteUser(ctx context.Context, userID string) error {
@@ -339,6 +420,22 @@ create table if not exists api_tokens (
 );
 
 create index if not exists api_tokens_user_idx on api_tokens (user_id);
+
+do $$ begin alter table users add column totp_secret_ciphertext bytea; exception when others then null; end $$;
+do $$ begin alter table users add column totp_enabled boolean not null default false; exception when others then null; end $$;
+
+create table if not exists preauth_sessions (
+  token_hash text primary key,
+  user_id text not null references users(id) on delete cascade,
+  expires_at timestamptz not null
+);
+
+create table if not exists totp_recovery_codes (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  code_hash text not null unique,
+  used_at timestamptz
+);
 `
 
 func ParseTags(raw string) []string {

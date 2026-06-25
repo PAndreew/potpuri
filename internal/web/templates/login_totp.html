@@ -1,0 +1,14 @@
+{{define "title"}}Two-factor authentication - Potpuri{{end}}
+{{define "body"}}
+<div class="auth-page">
+  <div class="auth-form">
+    <img class="auth-logo" src="/static/rose.svg" alt="Potpuri">
+    <h2>Two-factor authentication</h2>
+    <p>Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+    <form method="post" action="/login/totp">
+      <input name="code" placeholder="000000 or XXXX-XXXX" required autofocus autocomplete="one-time-code" inputmode="numeric">
+      <button>Verify</button>
+    </form>
+  </div>
+</div>
+{{end}}

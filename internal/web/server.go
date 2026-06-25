@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/microcosm-cc/bluemonday"
+	qrcode "github.com/skip2/go-qrcode"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
@@ -39,15 +40,18 @@ var templateFuncs = template.FuncMap{
 }
 
 type Server struct {
-	svc         *usecase.Service
-	index       *template.Template
-	loginTpl    *template.Template
-	registerTpl *template.Template
-	addTpl      *template.Template
-	editTpl     *template.Template
-	tokensTpl   *template.Template
-	accountTpl  *template.Template
-	config      Config
+	svc             *usecase.Service
+	index           *template.Template
+	loginTpl        *template.Template
+	loginTOTPTpl    *template.Template
+	registerTpl     *template.Template
+	addTpl          *template.Template
+	editTpl         *template.Template
+	tokensTpl       *template.Template
+	accountTpl      *template.Template
+	totpConfirmTpl  *template.Template
+	totpRecoveryTpl *template.Template
+	config          Config
 }
 
 type Config struct {
@@ -67,9 +71,12 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		registerTpl: parsePage("register.html"),
 		addTpl:      parsePage("add.html"),
 		editTpl:     parsePage("edit.html"),
-		tokensTpl:   parsePage("tokens.html"),
-		accountTpl:  parsePage("account.html"),
-		config:      config,
+		tokensTpl:       parsePage("tokens.html"),
+		accountTpl:      parsePage("account.html"),
+		totpConfirmTpl:  parsePage("totp_confirm.html"),
+		totpRecoveryTpl: parsePage("totp_recovery.html"),
+		loginTOTPTpl:    parsePage("login_totp.html"),
+		config:          config,
 	}
 }
 
@@ -94,6 +101,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/login", s.login)
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/login/totp", s.loginTOTPHTML)
+	mux.HandleFunc("/account/2fa/setup", s.setup2faHTML)
+	mux.HandleFunc("/account/2fa/confirm", s.confirm2faHTML)
+	mux.HandleFunc("/account/2fa/disable", s.disable2faHTML)
 	mux.HandleFunc("/share", s.shareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
@@ -174,12 +185,12 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	token, err := s.svc.Login(r.Context(), user.Email, r.FormValue("password"))
+	result, err := s.svc.Login(r.Context(), user.Email, r.FormValue("password"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	s.setSession(w, token)
+	s.setSession(w, result.SessionToken)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -188,12 +199,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		_ = s.loginTpl.Execute(w, map[string]any{"AllowRegistration": s.config.AllowRegistration})
 		return
 	}
-	token, err := s.svc.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
+	result, err := s.svc.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
 	if err != nil {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
-	s.setSession(w, token)
+	if result.RequiresTOTP {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "potpuri_preauth",
+			Value:    result.PreauthToken,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   s.config.SecureCookies,
+			SameSite: http.SameSiteStrictMode,
+			MaxAge:   300,
+		})
+		http.Redirect(w, r, "/login/totp", http.StatusSeeOther)
+		return
+	}
+	s.setSession(w, result.SessionToken)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -423,8 +447,109 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 	_ = s.accountTpl.Execute(w, map[string]any{
 		"UserID":      userID,
 		"Email":       user.Email,
-		"TOTPEnabled": false,
+		"TOTPEnabled": user.TOTPEnabled,
 	})
+}
+
+func (s *Server) loginTOTPHTML(w http.ResponseWriter, r *http.Request) {
+	preauthCookie, err := r.Cookie("potpuri_preauth")
+	if err != nil || preauthCookie.Value == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodGet {
+		_ = s.loginTOTPTpl.Execute(w, nil)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	sessionToken, err := s.svc.CompleteLoginTOTP(r.Context(), preauthCookie.Value, r.FormValue("code"))
+	if err != nil {
+		http.Error(w, "invalid code", http.StatusUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "potpuri_preauth", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
+	s.setSession(w, sessionToken)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) setup2faHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	_, _, err = s.svc.SetupTOTP(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/account/2fa/confirm", http.StatusSeeOther)
+}
+
+func (s *Server) confirm2faHTML(w http.ResponseWriter, r *http.Request) {
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodGet {
+		user, err := s.svc.GetUser(r.Context(), userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		uri, secret, err := s.svc.SetupTOTP(r.Context(), userID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = user
+		png, err := qrcode.Encode(uri, qrcode.Medium, 200)
+		var qrDataURL string
+		if err == nil {
+			qrDataURL = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+		}
+		_ = s.totpConfirmTpl.Execute(w, map[string]any{
+			"UserID":    userID,
+			"Secret":    secret,
+			"QRDataURL": qrDataURL,
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	codes, err := s.svc.ConfirmTOTP(r.Context(), userID, r.FormValue("secret"), r.FormValue("code"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = s.totpRecoveryTpl.Execute(w, map[string]any{"UserID": userID, "Codes": codes})
+}
+
+func (s *Server) disable2faHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := s.svc.DisableTOTP(r.Context(), userID, r.FormValue("code")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
 func (s *Server) deleteAccountHTML(w http.ResponseWriter, r *http.Request) {

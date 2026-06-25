@@ -10,12 +10,24 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
+
+	pquerna_totp "github.com/pquerna/otp/totp"
 
 	"potpuri/internal/security"
 	"potpuri/internal/storage/memory"
 	"potpuri/internal/usecase"
 	"potpuri/internal/web"
 )
+
+func mustLogin(t *testing.T, svc *usecase.Service, email, password string) string {
+	t.Helper()
+	result, err := svc.Login(context.Background(), email, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.SessionToken
+}
 
 func TestItemsAPIRequiresAuthentication(t *testing.T) {
 	store := memory.New()
@@ -46,10 +58,7 @@ func TestAuthenticatedUserCanCreateAndSearchThroughHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -83,10 +92,7 @@ func TestClipboardAPIInfersURLItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -120,10 +126,7 @@ func TestClipboardAPIRejectsEmptyCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -150,10 +153,7 @@ func TestAddPageHasManualCaptureFormWithoutClipboardButton(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -184,10 +184,7 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -347,10 +344,7 @@ func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Action item", Body: "edit me"})
 	if err != nil {
 		t.Fatal(err)
@@ -380,10 +374,7 @@ func TestHomeRendersUploadedImageBlocksAsRoundedImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	body := "# Heading\n\n**bold** [evil](javascript:alert(1)) <script>alert(1)</script>\n\n## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
 	if _, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: body}); err != nil {
 		t.Fatal(err)
@@ -422,10 +413,7 @@ func TestHomeRendersBlobBackedImageUploads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	var body bytes.Buffer
@@ -518,10 +506,7 @@ func TestHTMLCreateCombinesURLNoteAndFileIntoOneEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	var body bytes.Buffer
@@ -612,10 +597,7 @@ func TestAuthenticatedUserCanEditItemThroughHTML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Draft", Body: "old body", Tags: []string{"old"}})
 	if err != nil {
 		t.Fatal(err)
@@ -677,10 +659,7 @@ func TestEditPageKeepsUploadedImagesOutOfTextareaAndPreservesThemOnSave(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	itemBody := "## Uploaded files\n\n### photo.png\n\nContent-Type: image/png\nSize: 3 bytes\n\n```base64\nAQID\n```"
 	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Photo", Body: itemBody})
 	if err != nil {
@@ -740,10 +719,7 @@ func TestAuthenticatedUserCanDeleteItemThroughHTML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	item, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Temporary", Body: "delete route"})
 	if err != nil {
 		t.Fatal(err)
@@ -841,10 +817,7 @@ func TestShareTargetSavesPageAndRedirectsHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -902,10 +875,7 @@ func TestShareTargetWithNoContentRedirectsHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -977,10 +947,7 @@ func TestAccountPageShowsEmailAndExportLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -1010,10 +977,7 @@ func TestExportJSONContainsAllItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	if _, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Exported Note", Body: "hello"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1067,10 +1031,7 @@ func TestExportBookmarksContainsURLItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	if _, err := svc.CreateItem(context.Background(), usecase.CreateItemInput{UserID: user.ID, Title: "Go Blog", SourceURL: "https://go.dev/blog"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1107,10 +1068,7 @@ func TestDeleteAccountWithCorrectPasswordRemovesUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -1138,10 +1096,7 @@ func TestDeleteAccountWithWrongPasswordFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := svc.Login(context.Background(), user.Email, "correct horse")
-	if err != nil {
-		t.Fatal(err)
-	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
 	server := web.NewServer(svc)
 
 	rec := httptest.NewRecorder()
@@ -1177,5 +1132,193 @@ func TestDeleteAccountRequiresAuthentication(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
 		t.Fatalf("expected redirect to /login, got %s", rec.Header().Get("Location"))
+	}
+}
+
+func TestLoginWith2FAEnabledRedirectsToTOTPPage(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "totp2fa@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secret, err := svc.SetupTOTP(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := pquerna_totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConfirmTOTP(context.Background(), user.ID, secret, code); err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("email=totp2fa%40example.com&password=correct+horse"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "/login/totp" {
+		t.Fatalf("expected redirect to /login/totp, got %s", rec.Header().Get("Location"))
+	}
+	var hasPreauth bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "potpuri_preauth" && c.Value != "" {
+			hasPreauth = true
+		}
+	}
+	if !hasPreauth {
+		t.Fatal("expected potpuri_preauth cookie to be set")
+	}
+}
+
+func TestTOTPLoginPageRequiresPreauthCookie(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login/totp", nil)
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rec.Code)
+	}
+	if !strings.HasPrefix(rec.Header().Get("Location"), "/login") {
+		t.Fatalf("expected redirect to /login, got %s", rec.Header().Get("Location"))
+	}
+}
+
+func TestCompleteLoginWithValidTOTPCode(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "totpcode@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secret, err := svc.SetupTOTP(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setupCode, err := pquerna_totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ConfirmTOTP(context.Background(), user.ID, secret, setupCode); err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("email=totpcode%40example.com&password=correct+horse"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login/totp" {
+		t.Fatalf("expected redirect to /login/totp, got %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	var preauthCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "potpuri_preauth" {
+			preauthCookie = c
+		}
+	}
+	if preauthCookie == nil {
+		t.Fatal("no preauth cookie set")
+	}
+
+	verifyCode, err := pquerna_totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/login/totp", strings.NewReader("code="+verifyCode))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(preauthCookie)
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("expected redirect to /, got %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	var hasSession bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "potpuri_session" && c.Value != "" {
+			hasSession = true
+		}
+	}
+	if !hasSession {
+		t.Fatal("expected session cookie after TOTP verification")
+	}
+}
+
+func TestTOTPSetupConfirmAndDisableFlow(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "totpflow@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, secret, err := svc.SetupTOTP(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("SetupTOTP failed: %v", err)
+	}
+	if secret == "" {
+		t.Fatal("expected non-empty secret")
+	}
+
+	code, err := pquerna_totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryCodes, err := svc.ConfirmTOTP(context.Background(), user.ID, secret, code)
+	if err != nil {
+		t.Fatalf("ConfirmTOTP failed: %v", err)
+	}
+	if len(recoveryCodes) == 0 {
+		t.Fatal("expected recovery codes")
+	}
+
+	u, err := svc.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.TOTPEnabled {
+		t.Fatal("expected TOTP to be enabled")
+	}
+
+	disableCode, err := pquerna_totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DisableTOTP(context.Background(), user.ID, disableCode); err != nil {
+		t.Fatalf("DisableTOTP failed: %v", err)
+	}
+	u, err = svc.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.TOTPEnabled {
+		t.Fatal("expected TOTP to be disabled after DisableTOTP")
 	}
 }

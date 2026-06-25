@@ -11,19 +11,25 @@ import (
 )
 
 type Store struct {
-	mu        sync.Mutex
-	users     map[string]domain.User
-	items     []ports.StoredItem
-	blobs     []ports.StoredBlob
-	sessions  map[string]ports.Session
-	apiTokens map[string]ports.StoredAPIToken
+	mu              sync.Mutex
+	users           map[string]domain.User
+	items           []ports.StoredItem
+	blobs           []ports.StoredBlob
+	sessions        map[string]ports.Session
+	apiTokens       map[string]ports.StoredAPIToken
+	preauthSessions map[string]ports.StoredPreauthSession
+	totpSecrets     map[string][]byte
+	recoveryCodes   map[string]map[string]bool // userID → codeHash → used
 }
 
 func New() *Store {
 	return &Store{
-		users:     map[string]domain.User{},
-		sessions:  map[string]ports.Session{},
-		apiTokens: map[string]ports.StoredAPIToken{},
+		users:           map[string]domain.User{},
+		sessions:        map[string]ports.Session{},
+		apiTokens:       map[string]ports.StoredAPIToken{},
+		preauthSessions: map[string]ports.StoredPreauthSession{},
+		totpSecrets:     map[string][]byte{},
+		recoveryCodes:   map[string]map[string]bool{},
 	}
 }
 
@@ -285,6 +291,107 @@ func (s *Store) FindAPIToken(ctx context.Context, tokenHash string) (ports.Store
 		return ports.StoredAPIToken{}, errors.New("api token not found")
 	}
 	return t, nil
+}
+
+func (s *Store) StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.totpSecrets[userID] = append([]byte(nil), secretCiphertext...)
+	return nil
+}
+
+func (s *Store) ActivateTOTP(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == userID {
+			u.TOTPEnabled = true
+			s.users[email] = u
+			return nil
+		}
+	}
+	return errors.New("user not found")
+}
+
+func (s *Store) DisableTOTP(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == userID {
+			u.TOTPEnabled = false
+			s.users[email] = u
+			delete(s.totpSecrets, userID)
+			return nil
+		}
+	}
+	return errors.New("user not found")
+}
+
+func (s *Store) FindTOTPSecret(ctx context.Context, userID string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ct, ok := s.totpSecrets[userID]
+	if !ok {
+		return nil, errors.New("no TOTP secret")
+	}
+	return append([]byte(nil), ct...), nil
+}
+
+func (s *Store) CreatePreauthSession(ctx context.Context, session ports.StoredPreauthSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.preauthSessions[session.TokenHash] = session
+	return nil
+}
+
+func (s *Store) FindPreauthSession(ctx context.Context, tokenHash string) (ports.StoredPreauthSession, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.preauthSessions[tokenHash]
+	if !ok {
+		return ports.StoredPreauthSession{}, errors.New("preauth session not found")
+	}
+	return ps, nil
+}
+
+func (s *Store) DeletePreauthSession(ctx context.Context, tokenHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.preauthSessions, tokenHash)
+	return nil
+}
+
+func (s *Store) StoreRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := make(map[string]bool, len(codeHashes))
+	for _, h := range codeHashes {
+		m[h] = false
+	}
+	s.recoveryCodes[userID] = m
+	return nil
+}
+
+func (s *Store) FindAndConsumeRecoveryCode(ctx context.Context, userID string, codeHash string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.recoveryCodes[userID]
+	if !ok {
+		return false, nil
+	}
+	used, exists := m[codeHash]
+	if !exists || used {
+		return false, nil
+	}
+	m[codeHash] = true
+	return true, nil
+}
+
+func (s *Store) DeleteRecoveryCodes(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.recoveryCodes, userID)
+	return nil
 }
 
 func (s *Store) DeleteAPIToken(ctx context.Context, userID string, tokenID string) error {
