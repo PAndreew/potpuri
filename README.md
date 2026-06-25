@@ -1,17 +1,50 @@
 # Potpuri
 
-Potpuri is a small, self-hosted personal archive for files, photos, URLs, and Markdown notes.
+A minimalist, privacy-focused bookmarking application inspired by Bearblog.
 
-The first implementation slice includes:
+## Disclaimers
 
-- Built-in account registration and login.
-- Encrypted item body storage with AES-GCM.
-- Blind-indexed text tokens for search without storing plaintext search text.
-- Insertion-date item listing by default.
-- Minimal server-rendered HTML with a PWA manifest and service worker.
-- A browser extension skeleton with context-menu and clipboard capture.
+**On AI-assisted development:** Potpuri is being developed with Codex and Claude Code. I try to keep the scope of the project narrow and avoid frontend frameworks. The backend is written in Go, which has a low keyword set and relies mostly on its standard library — this hopefully makes it harder for LLMs to jumble things up. I think LLMs make it more pleasant to follow the TDD paradigm, so I always start with failing tests and then implement the actual features. As the project matures, LLM-reliance will decrease over time.
 
-## Run Locally
+**On monetisation:** The majority of Potpuri's features are free to use. I don't collect or sell any user data and don't serve ads. Since the hosting, development, and maintenance of such a project costs money, I added a Patron tier — the main benefit is extra storage and longer retention.
+
+## Why?
+
+I — as basically all human beings at this point — use multiple devices to manage my life and wanted an easy and secure way to preserve, share, and access data on these devices. In my experience, other popular bookmark apps like Linkwarden and Karakeep chugged the LLM pill — even their landing pages reek of LLM aesthetics (no offense). I'm not an LLM luddite (see the disclaimer above), but I'm not sure I want to send my personal digital trinkets to these people's servers just to extract 3 keywords from them. Also, the UI seems to be a bit intimidating. So, thank you, but no, thank you. I'm a big fan of Herman's Bearblog, and then it just hit me: I'm gonna roll my minimalist digital treasure trove.
+
+## What?
+
+Here is a list of what Potpuri offers for free:
+
+- Encrypted storage — only you can read your stuff
+- PWA, installable on iOS and Android
+- Unlimited devices
+- Bookmarklet to easily save content from your browser
+- Save text in Markdown format
+- Save photos and other files, like PDF docs (max 25 MB per entry)
+- Edit and delete items
+- Add tags
+- Import and export data
+- 250 MB storage
+- Share through secret link
+- One API key
+- No frontend fluff
+
+And here are a few additions you get if you become a Patron:
+
+- Email-to-save
+- 5 GB storage
+- 100 MB per entry upload limit
+- Multiple API keys
+- Optional custom domain
+- Priority support
+- My endless gratitude
+
+## Self-hosting
+
+Potpuri can be self-hosted — see [self-hosting.md](self-hosting.md) for details.
+
+## Run locally
 
 ```sh
 export POTPURI_DATABASE_URL='postgres://potpuri:potpuri@localhost:5432/potpuri?sslmode=disable'
@@ -22,7 +55,7 @@ go run ./cmd/potpuri
 
 Then open `http://localhost:8080`.
 
-## Test
+## Run tests
 
 ```sh
 go test ./...
@@ -30,13 +63,19 @@ go test ./...
 
 ## Architecture
 
-The code is intentionally split into clean layers:
+The code is split into clean layers:
 
-- `internal/domain`: entities and value objects.
-- `internal/ports`: interfaces between use cases and adapters.
-- `internal/usecase`: application behavior.
-- `internal/security`: encryption, search tokenization, password hashing.
-- `internal/storage/postgres`: Postgres adapter.
-- `internal/web`: HTTP/PWA adapter.
-- `internal/app`: factory wiring.
+- `internal/domain` — entities and value objects
+- `internal/ports` — interfaces between use cases and adapters
+- `internal/usecase` — application behaviour
+- `internal/security` — encryption, search tokenisation, password hashing
+- `internal/storage/postgres` — Postgres adapter
+- `internal/storage/r2` — Cloudflare R2 blob storage adapter
+- `internal/web` — HTTP and PWA adapter
+- `internal/app` — factory wiring
 
+## Contributing
+
+I am following Herman's steps in the sense that I'd like to keep the set of direct contributors narrow, but if you have a feature request or have encountered a bug, please open an issue or write to me directly.
+
+Have a great day and happy hunting.
