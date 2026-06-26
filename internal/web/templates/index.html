@@ -57,12 +57,7 @@
           var words=normalize(query).split(/\s+/).filter(Boolean);
           if(!words.length)return 1;
           text=normalize(text);
-          return words.every(function(word){
-            if(text.indexOf(word)>=0)return true;
-            var i=0;
-            for(var j=0;j<text.length&&i<word.length;j++)if(text[j]===word[i])i++;
-            return i===word.length;
-          });
+          return words.every(function(word){return text.indexOf(word)>=0;});
         }
         function filter(){
           var query=input.value;
