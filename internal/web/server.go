@@ -187,6 +187,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	noStoreHTML(w)
 	userID, _ := s.currentUserID(r)
 	var items []domain.Item
 	emailVerified := true
@@ -1445,6 +1446,12 @@ func blobDownloadURL(blobID string) string {
 	return "/items/blob?id=" + template.URLQueryEscaper(blobID) + "&download=1"
 }
 
+func noStoreHTML(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
 func manifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/manifest+json")
 	_, _ = w.Write([]byte(`{"name":"Potpuri","short_name":"Potpuri","start_url":"/","display":"standalone","background_color":"#ffffff","theme_color":"#111111","icons":[{"src":"/static/rose.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}],"share_target":{"action":"/share","method":"GET","params":{"title":"title","text":"text","url":"url"}}}`))
@@ -1452,6 +1459,7 @@ func manifest(w http.ResponseWriter, r *http.Request) {
 
 func serviceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	_, _ = w.Write([]byte(`self.addEventListener("install",event=>self.skipWaiting());self.addEventListener("fetch",()=>{});`))
 }
 

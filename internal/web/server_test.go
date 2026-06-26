@@ -225,8 +225,37 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 			t.Fatalf("home page missing client search hook %s: %s", want, body)
 		}
 	}
+	for _, want := range []string{`visibilitychange`, `pageshow`, `event.persisted`, `location.reload()`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home page missing PWA resume refresh hook %s: %s", want, body)
+		}
+	}
 	if strings.Contains(body, `name="source_url"`) || strings.Contains(body, `type="file"`) {
 		t.Fatalf("home page should not show capture form: %s", body)
+	}
+}
+
+func TestHomePreventsCachedHTML(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	server.Routes().ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
+		t.Fatalf("expected no-store Cache-Control, got %q", got)
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("expected no-cache Pragma, got %q", got)
+	}
+	if got := rec.Header().Get("Expires"); got != "0" {
+		t.Fatalf("expected Expires 0, got %q", got)
 	}
 }
 
@@ -1172,6 +1201,27 @@ func TestManifestIncludesShareTarget(t *testing.T) {
 	}
 	if m.ShareTarget.Params.Title != "title" || m.ShareTarget.Params.Text != "text" || m.ShareTarget.Params.URL != "url" {
 		t.Fatalf("share_target.params wrong: %+v", m.ShareTarget.Params)
+	}
+}
+
+func TestServiceWorkerIsNotCached(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sw.js", nil)
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected service worker, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, max-age=0" {
+		t.Fatalf("expected no-store Cache-Control, got %q", got)
 	}
 }
 

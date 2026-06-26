@@ -86,6 +86,7 @@
           .catch(function(){btn.textContent=orig;btn.disabled=false;});
       }
     </script>
+    {{template "resume-refresh-script" .}}
     {{template "sw-script" .}}
   {{else}}
     <main class="signed-out">

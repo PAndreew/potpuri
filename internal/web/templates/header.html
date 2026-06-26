@@ -8,3 +8,19 @@
 {{define "sw-script"}}<script>
     navigator.serviceWorker && navigator.serviceWorker.register('/sw.js');
   </script>{{end}}
+
+{{define "resume-refresh-script"}}<script>
+    (function(){
+      var hiddenAt=0;
+      window.addEventListener('pageshow',function(event){
+        if(event.persisted)location.reload();
+      });
+      document.addEventListener('visibilitychange',function(){
+        if(document.visibilityState==='hidden'){
+          hiddenAt=Date.now();
+        }else if(hiddenAt&&Date.now()-hiddenAt>1000){
+          location.reload();
+        }
+      });
+    })();
+  </script>{{end}}
