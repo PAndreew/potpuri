@@ -65,6 +65,7 @@ type Server struct {
 	totpConfirmTpl  *template.Template
 	totpRecoveryTpl *template.Template
 	patronTpl       *template.Template
+	shareViewTpl    *template.Template
 	adminTpl        *template.Template
 	docsTpl         *template.Template
 	tosTpl          *template.Template
@@ -100,6 +101,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		totpRecoveryTpl: parsePage("totp_recovery.html"),
 		loginTOTPTpl:    parsePage("login_totp.html"),
 		patronTpl:       parsePage("patron.html"),
+		shareViewTpl:    parsePage("share_view.html"),
 		adminTpl:        parsePage("admin.html"),
 		docsTpl:         parsePage("docs.html"),
 		tosTpl:          parsePage("tos.html"),
@@ -143,6 +145,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/tos", s.tosHTML)
 	mux.HandleFunc("/privacy", s.privacyHTML)
 	mux.HandleFunc("/share", s.shareHTML)
+	mux.HandleFunc("/items/share", s.createSecretShareHTML)
+	mux.HandleFunc("/s/", s.viewSecretShareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
 	mux.HandleFunc("/export", s.exportHandler)
@@ -185,6 +189,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	userID, _ := s.currentUserID(r)
 	var items []domain.Item
 	emailVerified := true
+	var isPatron bool
 	if userID != "" {
 		query := r.URL.Query().Get("q")
 		var err error
@@ -199,6 +204,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		}
 		if user, err := s.svc.GetUser(r.Context(), userID); err == nil {
 			emailVerified = user.EmailVerified
+			isPatron = user.Patron
 		}
 	}
 	_ = s.index.Execute(w, map[string]any{
@@ -206,6 +212,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		"Items":         items,
 		"Query":         r.URL.Query().Get("q"),
 		"EmailVerified": emailVerified,
+		"IsPatron":      isPatron,
 	})
 }
 
@@ -923,6 +930,50 @@ func (s *Server) revokeTokenHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/tokens", http.StatusSeeOther)
+}
+
+func (s *Server) createSecretShareHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	token, err := s.svc.CreateSecretShare(r.Context(), userID, r.FormValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	base := strings.TrimRight(s.config.PublicURL, "/")
+	if base == "" {
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		base = scheme + "://" + r.Host
+	}
+	writeJSON(w, map[string]string{"url": base + "/s/" + token})
+}
+
+func (s *Server) viewSecretShareHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	token := strings.TrimPrefix(r.URL.Path, "/s/")
+	if token == "" {
+		http.NotFound(w, r)
+		return
+	}
+	item, err := s.svc.ConsumeSecretShare(r.Context(), token)
+	if err != nil {
+		http.Error(w, "This link is invalid or has already been used.", http.StatusNotFound)
+		return
+	}
+	_ = s.shareViewTpl.Execute(w, map[string]any{"Item": item})
 }
 
 func (s *Server) setSession(w http.ResponseWriter, token string) {

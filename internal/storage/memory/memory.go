@@ -21,6 +21,7 @@ type Store struct {
 	totpSecrets        map[string][]byte
 	recoveryCodes      map[string]map[string]bool // userID → codeHash → used
 	emailVerifications map[string]ports.StoredEmailVerification
+	secretShares       map[string]ports.StoredSecretShare
 }
 
 func New() *Store {
@@ -32,6 +33,7 @@ func New() *Store {
 		totpSecrets:        map[string][]byte{},
 		recoveryCodes:      map[string]map[string]bool{},
 		emailVerifications: map[string]ports.StoredEmailVerification{},
+		secretShares:       map[string]ports.StoredSecretShare{},
 	}
 }
 
@@ -485,6 +487,24 @@ func (s *Store) DeleteAPIToken(ctx context.Context, userID string, tokenID strin
 		}
 	}
 	return errors.New("api token not found")
+}
+
+func (s *Store) CreateSecretShare(ctx context.Context, share ports.StoredSecretShare) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.secretShares[share.TokenHash] = share
+	return nil
+}
+
+func (s *Store) FindAndDeleteSecretShare(ctx context.Context, tokenHash string) (ports.StoredSecretShare, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	share, ok := s.secretShares[tokenHash]
+	if !ok {
+		return ports.StoredSecretShare{}, errors.New("secret share not found")
+	}
+	delete(s.secretShares, tokenHash)
+	return share, nil
 }
 
 func cloneItem(item ports.StoredItem) ports.StoredItem {

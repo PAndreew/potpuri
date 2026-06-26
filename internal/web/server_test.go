@@ -500,7 +500,7 @@ func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`<button class="ghost">Log out</button>`, `href="/items/edit?id=` + item.ID + `"`, `class="button"`, `class="ghost"`, `class="danger-text"`, `data-search=`, `Action item`, `edit me`} {
+	for _, want := range []string{`<button class="plain">Log out</button>`, `href="/items/edit?id=` + item.ID + `"`, `class="button"`, `class="ghost"`, `class="danger-text"`, `data-search=`, `Action item`, `edit me`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home page missing item action %s: %s", want, body)
 		}

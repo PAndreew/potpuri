@@ -104,6 +104,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		BlobContent:        blobContent,
 		Sessions:           store,
 		EmailVerifications: store,
+		SecretShares:       store,
 		Mailer:             mailer,
 		Cipher:             cipher,
 		Hasher:             security.NewPasswordHasher(),

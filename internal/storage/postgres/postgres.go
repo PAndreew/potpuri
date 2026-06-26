@@ -501,7 +501,29 @@ create table if not exists totp_recovery_codes (
   code_hash text not null unique,
   used_at timestamptz
 );
+
+create table if not exists secret_shares (
+  token_hash text primary key,
+  item_id text not null,
+  user_id text not null references users(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
 `
+
+func (s *Store) CreateSecretShare(ctx context.Context, share ports.StoredSecretShare) error {
+	_, err := s.db.ExecContext(ctx,
+		`insert into secret_shares (token_hash, item_id, user_id) values ($1, $2, $3)`,
+		share.TokenHash, share.ItemID, share.UserID)
+	return err
+}
+
+func (s *Store) FindAndDeleteSecretShare(ctx context.Context, tokenHash string) (ports.StoredSecretShare, error) {
+	var share ports.StoredSecretShare
+	err := s.db.QueryRowContext(ctx,
+		`delete from secret_shares where token_hash = $1 returning token_hash, item_id, user_id`,
+		tokenHash).Scan(&share.TokenHash, &share.ItemID, &share.UserID)
+	return share, err
+}
 
 func ParseTags(raw string) []string {
 	if strings.TrimSpace(raw) == "" {

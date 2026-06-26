@@ -77,6 +77,7 @@ type Service struct {
 	preauthSessions    ports.PreauthSessionRepository
 	recoveries         ports.TOTPRecoveryRepository
 	emailVerifications ports.EmailVerificationRepository
+	secretShares       ports.SecretShareRepository
 	mailer             ports.Mailer
 	cipher             ports.ItemCipher
 	hasher             ports.PasswordHasher
@@ -95,6 +96,7 @@ type NewServiceParams struct {
 	PreauthSessions    ports.PreauthSessionRepository
 	Recoveries         ports.TOTPRecoveryRepository
 	EmailVerifications ports.EmailVerificationRepository
+	SecretShares       ports.SecretShareRepository
 	Mailer             ports.Mailer
 	Cipher             ports.ItemCipher
 	Hasher             ports.PasswordHasher
@@ -152,6 +154,7 @@ func NewService(params NewServiceParams) *Service {
 		preauthSessions:    preauthSessions,
 		recoveries:         recoveries,
 		emailVerifications: emailVerifications,
+		secretShares:       params.SecretShares,
 		mailer:             params.Mailer,
 		cipher:             params.Cipher,
 		hasher:             params.Hasher,
@@ -914,6 +917,45 @@ func (s *Service) decryptItems(ctx context.Context, stored []ports.StoredItem) (
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func (s *Service) CreateSecretShare(ctx context.Context, userID, itemID string) (string, error) {
+	if userID == "" {
+		return "", ErrUnauthorized
+	}
+	user, err := s.users.FindUserByID(ctx, userID)
+	if err != nil {
+		return "", ErrUnauthorized
+	}
+	if !user.Patron {
+		return "", ErrUnauthorized
+	}
+	if s.secretShares == nil {
+		return "", fmt.Errorf("secret share not available")
+	}
+	if _, err := s.items.FindItem(ctx, userID, itemID); err != nil {
+		return "", ErrNotFound
+	}
+	token := randomToken()
+	if err := s.secretShares.CreateSecretShare(ctx, ports.StoredSecretShare{
+		TokenHash: hashToken(token),
+		ItemID:    itemID,
+		UserID:    userID,
+	}); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (s *Service) ConsumeSecretShare(ctx context.Context, token string) (domain.Item, error) {
+	if s.secretShares == nil {
+		return domain.Item{}, ErrNotFound
+	}
+	share, err := s.secretShares.FindAndDeleteSecretShare(ctx, hashToken(token))
+	if err != nil {
+		return domain.Item{}, ErrNotFound
+	}
+	return s.GetItem(ctx, share.UserID, share.ItemID)
 }
 
 func newID(prefix string) string {

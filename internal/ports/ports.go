@@ -130,6 +130,17 @@ type StoredAPIToken struct {
 	CreatedAt time.Time
 }
 
+type StoredSecretShare struct {
+	TokenHash string
+	ItemID    string
+	UserID    string
+}
+
+type SecretShareRepository interface {
+	CreateSecretShare(ctx context.Context, share StoredSecretShare) error
+	FindAndDeleteSecretShare(ctx context.Context, tokenHash string) (StoredSecretShare, error)
+}
+
 type ItemCipher interface {
 	SealString(plaintext string) ([]byte, error)
 	OpenString(ciphertext []byte) (string, error)

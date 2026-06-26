@@ -37,6 +37,7 @@
           <div class="actions">
             <a class="button" href="/items/edit?id={{.ID}}">Edit</a>
             <button class="ghost" onclick="navigator.clipboard.writeText(this.dataset.copy).then(()=>{var t=this.textContent;this.textContent='Copied!';setTimeout(()=>this.textContent=t,1500)}).catch(()=>{})" data-copy="{{.Title}}{{if .Body}}&#10;&#10;{{editableText .Body}}{{end}}">Copy</button>
+            {{if $.IsPatron}}<button class="plain" data-share-id="{{.ID}}" onclick="createShare(this)">Share</button>{{end}}
             <form method="post" action="/items/delete">
               <input type="hidden" name="id" value="{{.ID}}">
               <button class="danger-text">Delete</button>
@@ -70,6 +71,20 @@
         form.addEventListener('submit',function(event){event.preventDefault();filter();});
         filter();
       })();
+      function createShare(btn){
+        var id=btn.getAttribute('data-share-id');
+        var orig=btn.textContent;
+        btn.textContent='…';btn.disabled=true;
+        fetch('/items/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'id='+encodeURIComponent(id)})
+          .then(function(r){return r.json();})
+          .then(function(d){
+            return navigator.clipboard.writeText(d.url).then(function(){
+              btn.textContent='Link copied!';
+              setTimeout(function(){btn.textContent=orig;btn.disabled=false;},2500);
+            });
+          })
+          .catch(function(){btn.textContent=orig;btn.disabled=false;});
+      }
     </script>
     {{template "sw-script" .}}
   {{else}}

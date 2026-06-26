@@ -1,0 +1,10 @@
+{{define "title"}}{{.Item.Title}} — Potpuri{{end}}
+{{define "body"}}
+  <main class="share-view">
+    <a class="brand share-brand" href="/"><img src="/static/rose.svg" alt="Potpuri"> Potpuri</a>
+    <h1 class="share-title">{{.Item.Title}}</h1>
+    {{if .Item.SourceURL}}<p class="share-url"><a href="{{.Item.SourceURL}}">{{.Item.SourceURL}}</a></p>{{end}}
+    {{if .Item.Body}}<div class="item-body share-body">{{renderBody .Item.Body}}</div>{{end}}
+    <p class="share-note">This was a single-use link and is now expired.</p>
+  </main>
+{{end}}
