@@ -4,14 +4,13 @@
     {{template "header" .}}
     <div class="top-actions">
       <a href="/add">Add to Potpuri</a>
-      <a href="/account" class="muted-link">Settings</a>
       <a href="/patron" class="muted-link">Become a patron</a>
-      <details class="more-links">
-        <summary class="muted-link">More…</summary>
-        <a href="/docs" class="muted-link">Docs</a>
-        <a href="/tos" class="muted-link">Terms</a>
-        <a href="/privacy" class="muted-link">Privacy</a>
-      </details>
+      <label for="more-toggle" class="more-label muted-link">More…</label>
+      <input type="checkbox" id="more-toggle" class="more-input">
+      <a href="/account" class="muted-link more-link">Settings</a>
+      <a href="/docs" class="muted-link more-link">Docs</a>
+      <a href="/tos" class="muted-link more-link">Terms</a>
+      <a href="/privacy" class="muted-link more-link">Privacy</a>
     </div>
     <form class="search" method="get" action="/" id="entry-search">
       <input name="q" value="{{.Query}}" placeholder="Search" autocomplete="off">

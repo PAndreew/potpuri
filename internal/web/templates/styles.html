@@ -35,10 +35,9 @@
     .top-actions a{text-decoration:none}
     .muted-link{color:#999;font-size:.9rem}
     .muted-link:hover{color:#555}
-    details.more-links>summary{list-style:none;cursor:pointer;text-decoration:none}
-    details.more-links>summary::-webkit-details-marker{display:none}
-    details.more-links[open]{display:flex;flex-wrap:wrap;gap:20px;align-items:baseline}
-    @media(min-width:600px){details.more-links{display:contents}details.more-links>summary{display:none}details.more-links>a{display:inline}}
+    .more-input{display:none}
+    @media(max-width:599px){.more-link{display:none}.more-input:checked~.more-link{display:inline}.more-label{cursor:pointer}}
+    @media(min-width:600px){.more-label{display:none}}
     .search{display:flex;gap:8px;align-items:start;position:sticky;top:0;z-index:10;background:#fff;padding:10px 0;margin:0 0 12px;border-bottom:1px solid #eee}
     .search input{flex:1}
     .field{margin-bottom:12px}
