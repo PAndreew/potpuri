@@ -1038,7 +1038,7 @@ func TestTokensPageShowsIOSShortcutRecipeForNewToken(t *testing.T) {
 		t.Fatalf("expected tokens page, got %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"iOS Shortcut", "/api/shortcut", "Show in Share Sheet", "token = pt_testtoken"} {
+	for _, want := range []string{"iOS Shortcut", "/api/shortcut", "Show in Share Sheet", "Receive", "Get Contents of URL", "Share with Apps", "Run JavaScript on Webpage", "token = pt_testtoken"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("tokens page missing %q: %s", want, body)
 		}

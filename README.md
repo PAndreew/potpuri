@@ -94,24 +94,24 @@ Have a great day and happy hunting.
 ## iOS Shortcut
 
 *iOS does not expose installed PWAs as Web Share Target apps in the share sheet.
-To save from iOS, create a Shortcut named `Save to Potpuri`, enable `Show in
-Share Sheet`, and let it receive URLs, Safari webpages, and text.
+To save from iOS, create a Shortcut named `Save to Potpuri`.
 
 In Potpuri, create one API token from `/tokens`. The same token can be used for
 both the bookmarklet and the iOS Shortcut.
 
 Configure the Shortcut like this:
 
-1. Add `Get Details of Shortcut Input` for `Name`; send it as the `title` form field.
-2. Add `Get Details of Shortcut Input` for `URL`; send it as the `url` form field.
-3. Add `Text` containing `Shortcut Input`; send it as the `text` form field.
-4. Add `Get Contents of URL` using method `POST`, request body `Form`, and this endpoint:
+1. Open the Shortcut details, enable `Show in Share Sheet`, and set `Receive` to URLs, Safari webpages, and text. If the shortcut does not show up in some apps, temporarily add `Any` while testing.
+2. Add a `URL` action containing your Potpuri shortcut endpoint:
 
 ```text
 https://your-domain.example/api/shortcut
 ```
 
-Form fields:
+3. Add `Get Details of Shortcut Input` for `Name`; use that value as the `title` form field.
+4. Add `Get Details of Shortcut Input` for `URL`; use that value as the `url` form field.
+5. Add `Text` containing `Shortcut Input`; use that value as the `text` form field.
+6. Add `Get Contents of URL`, choose method `POST`, choose request body `Form`, and add these fields:
 
 ```text
 token = your Potpuri API token
@@ -119,3 +119,9 @@ title = Name from Shortcut Input
 url = URL from Shortcut Input
 text = Shortcut Input
 ```
+
+Use `Get Contents of URL`, not `Share` or `Share with Apps`. The Share actions
+send content onward to another app; Potpuri needs an HTTP POST to the shortcut
+endpoint. `Run JavaScript on Webpage` is optional and Safari-only: use it only
+if you want to extract selected text or page metadata from Safari, then pass
+that result into the same `Get Contents of URL` POST.
