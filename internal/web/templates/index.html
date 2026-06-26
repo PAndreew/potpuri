@@ -7,12 +7,12 @@
       <a href="/account" class="muted-link">Settings</a>
       <a href="/patron" class="muted-link">Become a patron</a>
     </div>
-    <form class="search" method="get" action="/">
-      <input name="q" value="{{.Query}}" placeholder="Search">
+    <form class="search" method="get" action="/" id="entry-search">
+      <input name="q" value="{{.Query}}" placeholder="Search" autocomplete="off">
       <button>Search</button>
     </form>
     {{range .Items}}
-      <details class="entry">
+      <details class="entry" data-search="{{.Title}} {{.Type}} {{.SourceURL}} {{range .Tags}}{{.}} {{end}}{{editableText .Body}}">
         <summary class="entry-summary">
           <span class="entry-title">{{.Title}}</span>
           <small class="entry-meta">{{.Type}} · {{fmtDate .CreatedAt}}{{range .Tags}} #{{.}}{{end}}</small>
@@ -41,6 +41,35 @@
     {{else}}
       <p>No entries yet.</p>
     {{end}}
+    <script>
+      (function(){
+        var form=document.getElementById('entry-search');
+        if(!form)return;
+        var input=form.querySelector('input[name="q"]');
+        var entries=[].slice.call(document.querySelectorAll('.entry[data-search]'));
+        function normalize(value){return (value||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');}
+        function score(text,query){
+          var words=normalize(query).split(/\s+/).filter(Boolean);
+          if(!words.length)return 1;
+          text=normalize(text);
+          return words.every(function(word){
+            if(text.indexOf(word)>=0)return true;
+            var i=0;
+            for(var j=0;j<text.length&&i<word.length;j++)if(text[j]===word[i])i++;
+            return i===word.length;
+          });
+        }
+        function filter(){
+          var query=input.value;
+          entries.forEach(function(entry){
+            entry.hidden=!score(entry.getAttribute('data-search'),query);
+          });
+        }
+        input.addEventListener('input',filter);
+        form.addEventListener('submit',function(event){event.preventDefault();filter();});
+        filter();
+      })();
+    </script>
     {{template "sw-script" .}}
   {{else}}
     <main class="signed-out">

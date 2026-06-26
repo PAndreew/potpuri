@@ -215,6 +215,11 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	if !strings.Contains(body, `overflow-wrap:anywhere`) {
 		t.Fatalf("home page stylesheet should wrap long text: %s", body)
 	}
+	for _, want := range []string{`id="entry-search"`, `addEventListener('input',filter)`, `position:sticky`, `background:#fff`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home page missing client search hook %s: %s", want, body)
+		}
+	}
 	if strings.Contains(body, `name="source_url"`) || strings.Contains(body, `type="file"`) {
 		t.Fatalf("home page should not show capture form: %s", body)
 	}
@@ -464,7 +469,7 @@ func TestHomeShowsEditActionAndGhostDeleteButton(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
 	server.Routes().ServeHTTP(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`<button class="ghost">Log out</button>`, `href="/items/edit?id=` + item.ID + `"`, `class="button"`, `class="ghost"`, `class="danger-text"`} {
+	for _, want := range []string{`<button class="ghost">Log out</button>`, `href="/items/edit?id=` + item.ID + `"`, `class="button"`, `class="ghost"`, `class="danger-text"`, `data-search=`, `Action item`, `edit me`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("home page missing item action %s: %s", want, body)
 		}
