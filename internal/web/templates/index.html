@@ -2,6 +2,7 @@
 {{define "body"}}
   {{if .UserID}}
     {{template "header" .}}
+    {{if not .EmailVerified}}<div class="verify-banner">Please verify your email address. <form method="post" action="/resend-verification" style="display:inline"><button class="plain">Resend link</button></form></div>{{end}}
     <div class="top-actions">
       <a href="/add">Add to Potpuri</a>
       <a href="/patron" class="muted-link">Become a patron</a>

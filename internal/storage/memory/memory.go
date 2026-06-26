@@ -11,25 +11,27 @@ import (
 )
 
 type Store struct {
-	mu              sync.Mutex
-	users           map[string]domain.User
-	items           []ports.StoredItem
-	blobs           []ports.StoredBlob
-	sessions        map[string]ports.Session
-	apiTokens       map[string]ports.StoredAPIToken
-	preauthSessions map[string]ports.StoredPreauthSession
-	totpSecrets     map[string][]byte
-	recoveryCodes   map[string]map[string]bool // userID → codeHash → used
+	mu                 sync.Mutex
+	users              map[string]domain.User
+	items              []ports.StoredItem
+	blobs              []ports.StoredBlob
+	sessions           map[string]ports.Session
+	apiTokens          map[string]ports.StoredAPIToken
+	preauthSessions    map[string]ports.StoredPreauthSession
+	totpSecrets        map[string][]byte
+	recoveryCodes      map[string]map[string]bool // userID → codeHash → used
+	emailVerifications map[string]ports.StoredEmailVerification
 }
 
 func New() *Store {
 	return &Store{
-		users:           map[string]domain.User{},
-		sessions:        map[string]ports.Session{},
-		apiTokens:       map[string]ports.StoredAPIToken{},
-		preauthSessions: map[string]ports.StoredPreauthSession{},
-		totpSecrets:     map[string][]byte{},
-		recoveryCodes:   map[string]map[string]bool{},
+		users:              map[string]domain.User{},
+		sessions:           map[string]ports.Session{},
+		apiTokens:          map[string]ports.StoredAPIToken{},
+		preauthSessions:    map[string]ports.StoredPreauthSession{},
+		totpSecrets:        map[string][]byte{},
+		recoveryCodes:      map[string]map[string]bool{},
+		emailVerifications: map[string]ports.StoredEmailVerification{},
 	}
 }
 
@@ -75,6 +77,47 @@ func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 		return users[i].CreatedAt.After(users[j].CreatedAt)
 	})
 	return users, nil
+}
+
+func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == userID {
+			u.EmailVerified = true
+			s.users[email] = u
+			return nil
+		}
+	}
+	return errors.New("user not found")
+}
+
+func (s *Store) CreateEmailVerification(ctx context.Context, v ports.StoredEmailVerification) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.emailVerifications[v.TokenHash] = v
+	return nil
+}
+
+func (s *Store) FindEmailVerification(ctx context.Context, tokenHash string) (ports.StoredEmailVerification, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.emailVerifications[tokenHash]
+	if !ok {
+		return ports.StoredEmailVerification{}, errors.New("verification not found")
+	}
+	return v, nil
+}
+
+func (s *Store) DeleteEmailVerificationsForUser(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, v := range s.emailVerifications {
+		if v.UserID == userID {
+			delete(s.emailVerifications, hash)
+		}
+	}
+	return nil
 }
 
 func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {

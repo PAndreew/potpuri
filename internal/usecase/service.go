@@ -68,33 +68,39 @@ func formatBytes(b int64) string {
 }
 
 type Service struct {
-	users           ports.UserRepository
-	items           ports.ItemRepository
-	blobs           ports.BlobRepository
-	blobContent     ports.BlobContentStore
-	sessions        ports.SessionRepository
-	apiTokens       ports.APITokenRepository
-	preauthSessions ports.PreauthSessionRepository
-	recoveries      ports.TOTPRecoveryRepository
-	cipher          ports.ItemCipher
-	hasher          ports.PasswordHasher
-	now             func() time.Time
-	quotas          Quotas
+	users              ports.UserRepository
+	items              ports.ItemRepository
+	blobs              ports.BlobRepository
+	blobContent        ports.BlobContentStore
+	sessions           ports.SessionRepository
+	apiTokens          ports.APITokenRepository
+	preauthSessions    ports.PreauthSessionRepository
+	recoveries         ports.TOTPRecoveryRepository
+	emailVerifications ports.EmailVerificationRepository
+	mailer             ports.Mailer
+	cipher             ports.ItemCipher
+	hasher             ports.PasswordHasher
+	now                func() time.Time
+	quotas             Quotas
+	publicURL          string
 }
 
 type NewServiceParams struct {
-	Users           ports.UserRepository
-	Items           ports.ItemRepository
-	Blobs           ports.BlobRepository
-	BlobContent     ports.BlobContentStore
-	Sessions        ports.SessionRepository
-	APITokens       ports.APITokenRepository
-	PreauthSessions ports.PreauthSessionRepository
-	Recoveries      ports.TOTPRecoveryRepository
-	Cipher          ports.ItemCipher
-	Hasher          ports.PasswordHasher
-	Now             func() time.Time
-	Quotas          *Quotas // nil means DefaultQuotas
+	Users              ports.UserRepository
+	Items              ports.ItemRepository
+	Blobs              ports.BlobRepository
+	BlobContent        ports.BlobContentStore
+	Sessions           ports.SessionRepository
+	APITokens          ports.APITokenRepository
+	PreauthSessions    ports.PreauthSessionRepository
+	Recoveries         ports.TOTPRecoveryRepository
+	EmailVerifications ports.EmailVerificationRepository
+	Mailer             ports.Mailer
+	Cipher             ports.ItemCipher
+	Hasher             ports.PasswordHasher
+	Now                func() time.Time
+	Quotas             *Quotas // nil means DefaultQuotas
+	PublicURL          string
 }
 
 func NewService(params NewServiceParams) *Service {
@@ -130,19 +136,28 @@ func NewService(params NewServiceParams) *Service {
 	if params.Quotas != nil {
 		quotas = *params.Quotas
 	}
+	emailVerifications := params.EmailVerifications
+	if emailVerifications == nil {
+		if repo, ok := params.Sessions.(ports.EmailVerificationRepository); ok {
+			emailVerifications = repo
+		}
+	}
 	return &Service{
-		users:           params.Users,
-		items:           params.Items,
-		blobs:           blobs,
-		blobContent:     params.BlobContent,
-		sessions:        params.Sessions,
-		apiTokens:       apiTokens,
-		preauthSessions: preauthSessions,
-		recoveries:      recoveries,
-		cipher:          params.Cipher,
-		hasher:          params.Hasher,
-		now:             now,
-		quotas:          quotas,
+		users:              params.Users,
+		items:              params.Items,
+		blobs:              blobs,
+		blobContent:        params.BlobContent,
+		sessions:           params.Sessions,
+		apiTokens:          apiTokens,
+		preauthSessions:    preauthSessions,
+		recoveries:         recoveries,
+		emailVerifications: emailVerifications,
+		mailer:             params.Mailer,
+		cipher:             params.Cipher,
+		hasher:             params.Hasher,
+		now:                now,
+		quotas:             quotas,
+		publicURL:          params.PublicURL,
 	}
 }
 
@@ -166,7 +181,56 @@ func (s *Service) Register(ctx context.Context, input RegisterInput) (domain.Use
 		PasswordHash: hash,
 		CreatedAt:    s.now().UTC(),
 	}
-	return user, s.users.CreateUser(ctx, user)
+	if err := s.users.CreateUser(ctx, user); err != nil {
+		return domain.User{}, err
+	}
+	_ = s.sendVerificationEmail(ctx, user) // best-effort; don't fail registration if email fails
+	return user, nil
+}
+
+func (s *Service) sendVerificationEmail(ctx context.Context, user domain.User) error {
+	if s.mailer == nil || s.emailVerifications == nil {
+		return nil
+	}
+	_ = s.emailVerifications.DeleteEmailVerificationsForUser(ctx, user.ID)
+	token := randomToken()
+	if err := s.emailVerifications.CreateEmailVerification(ctx, ports.StoredEmailVerification{
+		TokenHash: hashToken(token),
+		UserID:    user.ID,
+		ExpiresAt: s.now().UTC().Add(48 * time.Hour),
+	}); err != nil {
+		return err
+	}
+	return s.mailer.SendVerificationEmail(ctx, user.Email, s.publicURL+"/verify-email?token="+token)
+}
+
+func (s *Service) VerifyEmail(ctx context.Context, token string) error {
+	if s.emailVerifications == nil {
+		return fmt.Errorf("email verification not configured")
+	}
+	v, err := s.emailVerifications.FindEmailVerification(ctx, hashToken(token))
+	if err != nil {
+		return fmt.Errorf("invalid or expired verification link")
+	}
+	if !v.ExpiresAt.After(s.now().UTC()) {
+		_ = s.emailVerifications.DeleteEmailVerificationsForUser(ctx, v.UserID)
+		return fmt.Errorf("verification link has expired")
+	}
+	if err := s.users.SetEmailVerified(ctx, v.UserID); err != nil {
+		return err
+	}
+	return s.emailVerifications.DeleteEmailVerificationsForUser(ctx, v.UserID)
+}
+
+func (s *Service) ResendVerification(ctx context.Context, userID string) error {
+	user, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.EmailVerified {
+		return nil
+	}
+	return s.sendVerificationEmail(ctx, user)
 }
 
 type LoginResult struct {

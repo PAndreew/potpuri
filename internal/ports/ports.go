@@ -14,10 +14,27 @@ type UserRepository interface {
 	ListUsers(ctx context.Context) ([]domain.User, error)
 	DeleteUser(ctx context.Context, userID string) error
 	SetPatron(ctx context.Context, userID string, patron bool) error
+	SetEmailVerified(ctx context.Context, userID string) error
 	StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error
 	ActivateTOTP(ctx context.Context, userID string) error
 	DisableTOTP(ctx context.Context, userID string) error
 	FindTOTPSecret(ctx context.Context, userID string) ([]byte, error)
+}
+
+type StoredEmailVerification struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt time.Time
+}
+
+type EmailVerificationRepository interface {
+	CreateEmailVerification(ctx context.Context, v StoredEmailVerification) error
+	FindEmailVerification(ctx context.Context, tokenHash string) (StoredEmailVerification, error)
+	DeleteEmailVerificationsForUser(ctx context.Context, userID string) error
+}
+
+type Mailer interface {
+	SendVerificationEmail(ctx context.Context, toEmail, verifyURL string) error
 }
 
 type StoredPreauthSession struct {

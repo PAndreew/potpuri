@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"potpuri/internal/email"
 	"potpuri/internal/ports"
 	"potpuri/internal/security"
 	"potpuri/internal/storage/postgres"
@@ -34,6 +35,8 @@ type Factory struct {
 	R2AccessKeyID       string
 	R2SecretAccessKey   string
 	R2Bucket            string
+	ResendAPIKey        string
+	ResendFromEmail     string
 }
 
 func FactoryFromEnv() Factory {
@@ -55,6 +58,8 @@ func FactoryFromEnv() Factory {
 		R2AccessKeyID:       os.Getenv("R2_ACCESS_KEY_ID"),
 		R2SecretAccessKey:   os.Getenv("R2_SECRET_ACCESS_KEY"),
 		R2Bucket:            os.Getenv("R2_BUCKET"),
+		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
+		ResendFromEmail:     envDefault("RESEND_FROM_EMAIL", "noreply@potpuri.app"),
 	}
 }
 
@@ -88,14 +93,21 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 			Bucket:          f.R2Bucket,
 		})
 	}
+	var mailer ports.Mailer
+	if f.ResendAPIKey != "" {
+		mailer = &email.ResendMailer{APIKey: f.ResendAPIKey, FromEmail: f.ResendFromEmail}
+	}
 	svc := usecase.NewService(usecase.NewServiceParams{
-		Users:       store,
-		Items:       store,
-		Blobs:       store,
-		BlobContent: blobContent,
-		Sessions:    store,
-		Cipher:      cipher,
-		Hasher:      security.NewPasswordHasher(),
+		Users:              store,
+		Items:              store,
+		Blobs:              store,
+		BlobContent:        blobContent,
+		Sessions:           store,
+		EmailVerifications: store,
+		Mailer:             mailer,
+		Cipher:             cipher,
+		Hasher:             security.NewPasswordHasher(),
+		PublicURL:          f.PublicURL,
 	})
 	handler := web.NewServerWithConfig(svc, web.Config{
 		AllowRegistration:   f.AllowRegistration,

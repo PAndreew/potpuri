@@ -42,8 +42,8 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 	var user domain.User
 	var totpEnabled sql.NullBool
 	err := s.db.QueryRowContext(ctx,
-		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at from users where email = $1`, email).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt)
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at from users where email = $1`, email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
@@ -52,15 +52,15 @@ func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, e
 	var user domain.User
 	var totpEnabled sql.NullBool
 	err := s.db.QueryRowContext(ctx,
-		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at from users where id = $1`, userID).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt)
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at from users where id = $1`, userID).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at
+select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at
 from users order by created_at desc`)
 	if err != nil {
 		return nil, err
@@ -70,13 +70,36 @@ from users order by created_at desc`)
 	for rows.Next() {
 		var user domain.User
 		var totpEnabled sql.NullBool
-		if err := rows.Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		user.TOTPEnabled = totpEnabled.Bool
 		users = append(users, user)
 	}
 	return users, rows.Err()
+}
+
+func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `update users set email_verified = true where id = $1`, userID)
+	return err
+}
+
+func (s *Store) CreateEmailVerification(ctx context.Context, v ports.StoredEmailVerification) error {
+	_, err := s.db.ExecContext(ctx, `insert into email_verifications (token_hash, user_id, expires_at) values ($1, $2, $3)`,
+		v.TokenHash, v.UserID, v.ExpiresAt)
+	return err
+}
+
+func (s *Store) FindEmailVerification(ctx context.Context, tokenHash string) (ports.StoredEmailVerification, error) {
+	var v ports.StoredEmailVerification
+	err := s.db.QueryRowContext(ctx, `select token_hash, user_id, expires_at from email_verifications where token_hash = $1`, tokenHash).
+		Scan(&v.TokenHash, &v.UserID, &v.ExpiresAt)
+	return v, err
+}
+
+func (s *Store) DeleteEmailVerificationsForUser(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `delete from email_verifications where user_id = $1`, userID)
+	return err
 }
 
 func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {
@@ -458,6 +481,13 @@ create index if not exists api_tokens_user_idx on api_tokens (user_id);
 do $$ begin alter table users add column totp_secret_ciphertext bytea; exception when others then null; end $$;
 do $$ begin alter table users add column totp_enabled boolean not null default false; exception when others then null; end $$;
 do $$ begin alter table users add column patron boolean not null default false; exception when others then null; end $$;
+do $$ begin alter table users add column email_verified boolean not null default false; exception when others then null; end $$;
+
+create table if not exists email_verifications (
+  token_hash text primary key,
+  user_id text not null references users(id) on delete cascade,
+  expires_at timestamptz not null
+);
 
 create table if not exists preauth_sessions (
   token_hash text primary key,

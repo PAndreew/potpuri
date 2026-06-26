@@ -126,6 +126,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/", s.home)
 	mux.HandleFunc("/add", s.add)
 	mux.HandleFunc("/register", s.register)
+	mux.HandleFunc("/verify-email", s.verifyEmailHTML)
+	mux.HandleFunc("/resend-verification", s.resendVerificationHTML)
 	mux.HandleFunc("/login", s.login)
 	mux.HandleFunc("/logout", s.logout)
 	mux.HandleFunc("/health", health)
@@ -182,6 +184,7 @@ func health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	userID, _ := s.currentUserID(r)
 	var items []domain.Item
+	emailVerified := true
 	if userID != "" {
 		query := r.URL.Query().Get("q")
 		var err error
@@ -194,8 +197,43 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if user, err := s.svc.GetUser(r.Context(), userID); err == nil {
+			emailVerified = user.EmailVerified
+		}
 	}
-	_ = s.index.Execute(w, map[string]any{"UserID": userID, "Items": items, "Query": r.URL.Query().Get("q")})
+	_ = s.index.Execute(w, map[string]any{
+		"UserID":        userID,
+		"Items":         items,
+		"Query":         r.URL.Query().Get("q"),
+		"EmailVerified": emailVerified,
+	})
+}
+
+func (s *Server) verifyEmailHTML(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+	if err := s.svc.VerifyEmail(r.Context(), token); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) resendVerificationHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	_ = s.svc.ResendVerification(r.Context(), userID)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) add(w http.ResponseWriter, r *http.Request) {
