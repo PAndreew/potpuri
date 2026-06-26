@@ -66,6 +66,9 @@ type Server struct {
 	totpRecoveryTpl *template.Template
 	patronTpl       *template.Template
 	adminTpl        *template.Template
+	docsTpl         *template.Template
+	tosTpl          *template.Template
+	privacyTpl      *template.Template
 	config          Config
 }
 
@@ -98,6 +101,9 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		loginTOTPTpl:    parsePage("login_totp.html"),
 		patronTpl:       parsePage("patron.html"),
 		adminTpl:        parsePage("admin.html"),
+		docsTpl:         parsePage("docs.html"),
+		tosTpl:          parsePage("tos.html"),
+		privacyTpl:      parsePage("privacy.html"),
 		config:          config,
 	}
 }
@@ -131,6 +137,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/billing/checkout", s.checkoutHTML)
 	mux.HandleFunc("/stripe/webhook", s.stripeWebhook)
 	mux.HandleFunc("/admin", s.adminHTML)
+	mux.HandleFunc("/docs", s.docsHTML)
+	mux.HandleFunc("/tos", s.tosHTML)
+	mux.HandleFunc("/privacy", s.privacyHTML)
 	mux.HandleFunc("/share", s.shareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
@@ -739,6 +748,33 @@ func (s *Server) adminHTML(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{}
 	data["Users"] = users
 	_ = s.adminTpl.Execute(w, data)
+}
+
+func (s *Server) docsHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, _ := s.currentUserID(r)
+	_ = s.docsTpl.Execute(w, map[string]any{"UserID": userID})
+}
+
+func (s *Server) tosHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, _ := s.currentUserID(r)
+	_ = s.tosTpl.Execute(w, map[string]any{"UserID": userID})
+}
+
+func (s *Server) privacyHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, _ := s.currentUserID(r)
+	_ = s.privacyTpl.Execute(w, map[string]any{"UserID": userID})
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {

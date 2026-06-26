@@ -1,0 +1,24 @@
+{{define "title"}}Privacy - Potpuri{{end}}
+{{define "body"}}
+  {{if .UserID}}{{template "header" .}}{{end}}
+  <a class="top-link" href="/">Back to Potpuri</a>
+  <main class="document-page">
+    <h2>Privacy Policy</h2>
+    <p><small>Last updated: June 26, 2026</small></p>
+
+    <h3>What Potpuri stores</h3>
+    <p>Potpuri stores your email address, password hash, account settings, API token hashes, encrypted saved items, and encrypted uploaded file content.</p>
+
+    <h3>Encryption</h3>
+    <p>Saved item text and uploaded file content are encrypted before being stored. Search uses derived tokens so the database can match entries without storing plaintext search text.</p>
+
+    <h3>Payments</h3>
+    <p>If you become a Patron, payment processing is handled by the payment provider. Potpuri stores only the account status needed to enable Patron features.</p>
+
+    <h3>No tracking or ads</h3>
+    <p>Potpuri does not sell user data, serve ads, or include third-party analytics.</p>
+
+    <h3>Deleting your data</h3>
+    <p>You can delete your account from the account page. Deletion removes your account and saved data from Potpuri.</p>
+  </main>
+{{end}}

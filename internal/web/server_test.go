@@ -209,6 +209,11 @@ func TestHomeShowsAddLinkAndNotCaptureForm(t *testing.T) {
 	if !strings.Contains(body, `href="/add"`) {
 		t.Fatalf("home page missing add link: %s", body)
 	}
+	for _, want := range []string{`href="/docs"`, `href="/tos"`, `href="/privacy"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("home page missing document link %s: %s", want, body)
+		}
+	}
 	if !strings.Contains(body, `href="/static/rose.svg"`) || !strings.Contains(body, `src="/static/rose.svg"`) {
 		t.Fatalf("home page missing rose logo/favicon: %s", body)
 	}
@@ -253,6 +258,32 @@ func TestSignedOutHomeShowsIntroAndSignInLink(t *testing.T) {
 	for _, removed := range []string{`action="/register"`, `action="/login"`, `<h2>Register</h2>`} {
 		if strings.Contains(body, removed) {
 			t.Fatalf("signed out home should not show auth form %q: %s", removed, body)
+		}
+	}
+}
+
+func TestDocumentPagesRender(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	for path, want := range map[string]string{
+		"/docs":    "Docs",
+		"/tos":     "Terms of Service",
+		"/privacy": "Privacy Policy",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		server.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s failed: %d %s", path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("%s missing %q: %s", path, want, rec.Body.String())
 		}
 	}
 }

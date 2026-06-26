@@ -1,0 +1,21 @@
+{{define "title"}}Docs - Potpuri{{end}}
+{{define "body"}}
+  {{if .UserID}}{{template "header" .}}{{end}}
+  <a class="top-link" href="/">Back to Potpuri</a>
+  <main class="document-page">
+    <h2>Docs</h2>
+    <p>Potpuri saves links, notes, photos, and files in a minimal private library.</p>
+
+    <h3>Saving items</h3>
+    <p>Use <a href="/add">Add to Potpuri</a> to save a note, link, photo, or file. Titles are optional; Potpuri will choose one from the URL, filename, or first line of text when possible.</p>
+
+    <h3>Searching</h3>
+    <p>The search bar filters visible entries as you type. Submitting the form also runs the server-side encrypted token search.</p>
+
+    <h3>API tokens, bookmarklet, and iOS Shortcut</h3>
+    <p>Create an API token from <a href="/tokens">API Tokens</a>. The same token can be used for the bookmarklet and the iOS Shortcut.</p>
+
+    <h3>Export</h3>
+    <p>Your account page includes JSON and bookmarks HTML exports.</p>
+  </main>
+{{end}}
