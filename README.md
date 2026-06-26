@@ -1,10 +1,10 @@
-<p align="center">
+<div align="center">
   <img src="internal/web/static/rose.svg" alt="Potpuri" width="96" height="96">
-</p>
+  <h1>Potpuri</h1>
+  <p><a href="https://potpuri.cc">potpuri.cc</a></p>
+</div>
 
-# Potpuri
-
-A minimalist, privacy-focused bookmarking application inspired by Bearblog.
+### A free, minimalist, privacy-focused bookmarking application inspired by [Bearblog](https://bearblog.dev).
 
 
 
@@ -87,7 +87,7 @@ The code is split into clean layers:
 
 ## Contributing
 
-I am following Herman's steps in the sense that I'd like to keep the set of direct contributors narrow, but if you have a feature request or have encountered a bug, please open an issue or write to me directly.
+Potpuri doesn't accept pull requests — the codebase is open to read and clone, but direct contributions are not taken in at this time. If you have a feature request or have found a bug, please open an issue.
 
 Have a great day and happy hunting.
 
