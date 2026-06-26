@@ -6,9 +6,12 @@
       <a href="/add">Add to Potpuri</a>
       <a href="/account" class="muted-link">Settings</a>
       <a href="/patron" class="muted-link">Become a patron</a>
-      <a href="/docs" class="muted-link">Docs</a>
-      <a href="/tos" class="muted-link">Terms</a>
-      <a href="/privacy" class="muted-link">Privacy</a>
+      <details class="more-links">
+        <summary class="muted-link">More…</summary>
+        <a href="/docs" class="muted-link">Docs</a>
+        <a href="/tos" class="muted-link">Terms</a>
+        <a href="/privacy" class="muted-link">Privacy</a>
+      </details>
     </div>
     <form class="search" method="get" action="/" id="entry-search">
       <input name="q" value="{{.Query}}" placeholder="Search" autocomplete="off">

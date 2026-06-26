@@ -6,6 +6,8 @@
     .button.ghost,button.ghost{background:transparent;color:#111;border-color:#bbb}
     .actions{display:flex;gap:8px;align-items:center;margin-top:12px}
     .actions form{margin:0}
+    button.plain{background:none;border:none;color:#999;font-size:.9rem;cursor:pointer;font:inherit;padding:0}
+    button.plain:hover{color:#555}
     button.danger-text{background:none;border:none;color:#b07070;cursor:pointer;font:inherit;padding:8px 4px}
     button.danger-text:hover{color:#933}
     a{color:#0645ad}
@@ -33,6 +35,10 @@
     .top-actions a{text-decoration:none}
     .muted-link{color:#999;font-size:.9rem}
     .muted-link:hover{color:#555}
+    details.more-links>summary{list-style:none;cursor:pointer;text-decoration:none}
+    details.more-links>summary::-webkit-details-marker{display:none}
+    details.more-links[open]{display:flex;flex-wrap:wrap;gap:20px;align-items:baseline}
+    @media(min-width:600px){details.more-links{display:contents}details.more-links>summary{display:none}details.more-links>a{display:inline}}
     .search{display:flex;gap:8px;align-items:start;position:sticky;top:0;z-index:10;background:#fff;padding:10px 0;margin:0 0 12px;border-bottom:1px solid #eee}
     .search input{flex:1}
     .field{margin-bottom:12px}
