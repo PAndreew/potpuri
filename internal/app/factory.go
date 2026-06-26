@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"potpuri/internal/email"
+	"potpuri/internal/fetch"
 	"potpuri/internal/ports"
 	"potpuri/internal/security"
 	"potpuri/internal/storage/postgres"
@@ -105,6 +106,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		Sessions:           store,
 		EmailVerifications: store,
 		SecretShares:       store,
+		Fetcher:            &fetch.HTTPFetcher{},
 		Mailer:             mailer,
 		Cipher:             cipher,
 		Hasher:             security.NewPasswordHasher(),

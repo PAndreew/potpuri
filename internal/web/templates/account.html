@@ -18,6 +18,28 @@
   </section>
 
   <section>
+    <h3>URL capture mode</h3>
+    <p>When you save a URL without selecting any text, Potpuri can optionally fetch the page for you.</p>
+    <form method="post" action="/account/capture-mode">
+      <div class="capture-options">
+        <label class="capture-option">
+          <input type="radio" name="capture_mode" value="url" {{if eq .CaptureMode "url"}}checked{{end}}>
+          <span><strong>URL only</strong> — just save the link</span>
+        </label>
+        <label class="capture-option">
+          <input type="radio" name="capture_mode" value="meta" {{if eq .CaptureMode "meta"}}checked{{end}}>
+          <span><strong>Page description</strong> — fetch the title and meta description</span>
+        </label>
+        <label class="capture-option">
+          <input type="radio" name="capture_mode" value="full" {{if eq .CaptureMode "full"}}checked{{end}}>
+          <span><strong>Full page</strong> — fetch and convert the page content to Markdown</span>
+        </label>
+      </div>
+      <button style="margin-top:8px">Save</button>
+    </form>
+  </section>
+
+  <section>
     <h3>Two-factor authentication</h3>
     {{if .TOTPEnabled}}
       <p>2FA is <strong>enabled</strong>.</p>

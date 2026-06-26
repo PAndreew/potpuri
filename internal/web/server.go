@@ -148,6 +148,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/items/share", s.createSecretShareHTML)
 	mux.HandleFunc("/s/", s.viewSecretShareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
+	mux.HandleFunc("/account/capture-mode", s.captureModeSaveHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
 	mux.HandleFunc("/export", s.exportHandler)
 	mux.HandleFunc("/tokens", s.tokensHTML)
@@ -563,11 +564,16 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	captureMode := user.CaptureMode
+	if captureMode == "" {
+		captureMode = "url"
+	}
 	_ = s.accountTpl.Execute(w, map[string]any{
 		"UserID":      userID,
 		"Email":       user.Email,
 		"TOTPEnabled": user.TOTPEnabled,
 		"Patron":      user.Patron,
+		"CaptureMode": captureMode,
 	})
 }
 
@@ -666,6 +672,23 @@ func (s *Server) disable2faHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.svc.DisableTOTP(r.Context(), userID, r.FormValue("code")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+
+func (s *Server) captureModeSaveHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := s.svc.UpdateCaptureMode(r.Context(), userID, r.FormValue("capture_mode")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -42,8 +42,8 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (domain.User,
 	var user domain.User
 	var totpEnabled sql.NullBool
 	err := s.db.QueryRowContext(ctx,
-		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at from users where email = $1`, email).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt)
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), coalesce(capture_mode, 'url'), created_at from users where email = $1`, email).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CaptureMode, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
@@ -52,15 +52,15 @@ func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, e
 	var user domain.User
 	var totpEnabled sql.NullBool
 	err := s.db.QueryRowContext(ctx,
-		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at from users where id = $1`, userID).
-		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt)
+		`select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), coalesce(capture_mode, 'url'), created_at from users where id = $1`, userID).
+		Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CaptureMode, &user.CreatedAt)
 	user.TOTPEnabled = totpEnabled.Bool
 	return user, err
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), created_at
+select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), coalesce(email_verified, false), coalesce(capture_mode, 'url'), created_at
 from users order by created_at desc`)
 	if err != nil {
 		return nil, err
@@ -70,13 +70,18 @@ from users order by created_at desc`)
 	for rows.Next() {
 		var user domain.User
 		var totpEnabled sql.NullBool
-		if err := rows.Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.EmailVerified, &user.CaptureMode, &user.CreatedAt); err != nil {
 			return nil, err
 		}
 		user.TOTPEnabled = totpEnabled.Bool
 		users = append(users, user)
 	}
 	return users, rows.Err()
+}
+
+func (s *Store) SetCaptureMode(ctx context.Context, userID string, mode string) error {
+	_, err := s.db.ExecContext(ctx, `update users set capture_mode = $2 where id = $1`, userID, mode)
+	return err
 }
 
 func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
@@ -482,6 +487,7 @@ do $$ begin alter table users add column totp_secret_ciphertext bytea; exception
 do $$ begin alter table users add column totp_enabled boolean not null default false; exception when others then null; end $$;
 do $$ begin alter table users add column patron boolean not null default false; exception when others then null; end $$;
 do $$ begin alter table users add column email_verified boolean not null default false; exception when others then null; end $$;
+do $$ begin alter table users add column capture_mode text not null default 'url'; exception when others then null; end $$;
 
 create table if not exists email_verifications (
   token_hash text primary key,

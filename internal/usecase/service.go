@@ -78,6 +78,7 @@ type Service struct {
 	recoveries         ports.TOTPRecoveryRepository
 	emailVerifications ports.EmailVerificationRepository
 	secretShares       ports.SecretShareRepository
+	fetcher            ports.PageFetcher
 	mailer             ports.Mailer
 	cipher             ports.ItemCipher
 	hasher             ports.PasswordHasher
@@ -97,6 +98,7 @@ type NewServiceParams struct {
 	Recoveries         ports.TOTPRecoveryRepository
 	EmailVerifications ports.EmailVerificationRepository
 	SecretShares       ports.SecretShareRepository
+	Fetcher            ports.PageFetcher
 	Mailer             ports.Mailer
 	Cipher             ports.ItemCipher
 	Hasher             ports.PasswordHasher
@@ -155,6 +157,7 @@ func NewService(params NewServiceParams) *Service {
 		recoveries:         recoveries,
 		emailVerifications: emailVerifications,
 		secretShares:       params.SecretShares,
+		fetcher:            params.Fetcher,
 		mailer:             params.Mailer,
 		cipher:             params.Cipher,
 		hasher:             params.Hasher,
@@ -557,6 +560,18 @@ type BlobInput struct {
 	Content     []byte
 }
 
+func (s *Service) UpdateCaptureMode(ctx context.Context, userID, mode string) error {
+	if userID == "" {
+		return ErrUnauthorized
+	}
+	switch mode {
+	case "url", "meta", "full":
+	default:
+		return fmt.Errorf("invalid capture mode")
+	}
+	return s.users.SetCaptureMode(ctx, userID, mode)
+}
+
 func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain.Item, error) {
 	if input.UserID == "" {
 		return domain.Item{}, ErrUnauthorized
@@ -566,6 +581,20 @@ func (s *Service) CreateItem(ctx context.Context, input CreateItemInput) (domain
 	}
 	if input.Type == "" {
 		input.Type = domain.ItemTypeNote
+	}
+	// Auto-fetch page content when URL is present, body is empty, and user has a non-default capture mode.
+	if input.SourceURL != "" && strings.TrimSpace(input.Body) == "" && s.fetcher != nil {
+		if user, err := s.users.FindUserByID(ctx, input.UserID); err == nil {
+			mode := user.CaptureMode
+			if mode == "" {
+				mode = "url"
+			}
+			if mode != "url" {
+				if body, err := s.fetcher.FetchPage(ctx, input.SourceURL, mode); err == nil {
+					input.Body = body
+				}
+			}
+		}
 	}
 	title, err := s.cipher.SealString(strings.TrimSpace(input.Title))
 	if err != nil {

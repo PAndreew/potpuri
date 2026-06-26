@@ -15,6 +15,7 @@ type UserRepository interface {
 	DeleteUser(ctx context.Context, userID string) error
 	SetPatron(ctx context.Context, userID string, patron bool) error
 	SetEmailVerified(ctx context.Context, userID string) error
+	SetCaptureMode(ctx context.Context, userID string, mode string) error
 	StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error
 	ActivateTOTP(ctx context.Context, userID string) error
 	DisableTOTP(ctx context.Context, userID string) error
@@ -128,6 +129,10 @@ type StoredAPIToken struct {
 	Name      string
 	TokenHash string
 	CreatedAt time.Time
+}
+
+type PageFetcher interface {
+	FetchPage(ctx context.Context, rawURL, mode string) (string, error)
 }
 
 type StoredSecretShare struct {

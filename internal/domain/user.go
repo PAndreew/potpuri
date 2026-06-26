@@ -9,5 +9,6 @@ type User struct {
 	TOTPEnabled   bool
 	Patron        bool
 	EmailVerified bool
+	CaptureMode   string // "url" | "meta" | "full"; empty means "url"
 	CreatedAt     time.Time
 }
