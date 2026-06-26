@@ -64,6 +64,19 @@ func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, e
 	return domain.User{}, errors.New("user not found")
 }
 
+func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	users := make([]domain.User, 0, len(s.users))
+	for _, user := range s.users {
+		users = append(users, user)
+	}
+	sort.Slice(users, func(i, j int) bool {
+		return users[i].CreatedAt.After(users[j].CreatedAt)
+	})
+	return users, nil
+}
+
 func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

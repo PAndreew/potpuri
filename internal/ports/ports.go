@@ -11,6 +11,7 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, user domain.User) error
 	FindUserByEmail(ctx context.Context, email string) (domain.User, error)
 	FindUserByID(ctx context.Context, userID string) (domain.User, error)
+	ListUsers(ctx context.Context) ([]domain.User, error)
 	DeleteUser(ctx context.Context, userID string) error
 	SetPatron(ctx context.Context, userID string, patron bool) error
 	StoreTOTPSecret(ctx context.Context, userID string, secretCiphertext []byte) error

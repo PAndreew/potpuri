@@ -346,6 +346,17 @@ func (s *Service) GetUser(ctx context.Context, userID string) (domain.User, erro
 	return s.users.FindUserByID(ctx, userID)
 }
 
+func (s *Service) SetPatron(ctx context.Context, userID string, patron bool) error {
+	if strings.TrimSpace(userID) == "" {
+		return ErrUnauthorized
+	}
+	return s.users.SetPatron(ctx, strings.TrimSpace(userID), patron)
+}
+
+func (s *Service) ListUsers(ctx context.Context) ([]domain.User, error) {
+	return s.users.ListUsers(ctx)
+}
+
 func (s *Service) DeleteAccount(ctx context.Context, userID, password string) error {
 	if userID == "" {
 		return ErrUnauthorized

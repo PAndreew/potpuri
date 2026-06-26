@@ -58,6 +58,27 @@ func (s *Store) FindUserByID(ctx context.Context, userID string) (domain.User, e
 	return user, err
 }
 
+func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select id, email, password_hash, coalesce(totp_enabled, false), coalesce(patron, false), created_at
+from users order by created_at desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []domain.User
+	for rows.Next() {
+		var user domain.User
+		var totpEnabled sql.NullBool
+		if err := rows.Scan(&user.ID, &user.Email, &user.PasswordHash, &totpEnabled, &user.Patron, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		user.TOTPEnabled = totpEnabled.Bool
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
 func (s *Store) SetPatron(ctx context.Context, userID string, patron bool) error {
 	_, err := s.db.ExecContext(ctx, `update users set patron = $2 where id = $1`, userID, patron)
 	return err

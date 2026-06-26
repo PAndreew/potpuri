@@ -1,0 +1,31 @@
+{{define "title"}}Admin - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/">Back to items</a>
+  <h2>Admin</h2>
+
+  {{if .Error}}<p class="admin-error">{{.Error}}</p>{{end}}
+
+  <table class="admin-users">
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Plan</th>
+        <th>2FA</th>
+        <th>Signed up</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+        <tr>
+          <td>{{.Email}}</td>
+          <td>{{if .Patron}}Patron{{else}}Free{{end}}</td>
+          <td>{{if .TOTPEnabled}}On{{else}}Off{{end}}</td>
+          <td>{{fmtDate .CreatedAt}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="4">No users yet.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+{{end}}

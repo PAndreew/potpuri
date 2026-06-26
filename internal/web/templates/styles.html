@@ -1,7 +1,7 @@
 {{define "styles"}}
     body{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.45}
     body{overflow-wrap:anywhere}
-    input,textarea,button,.button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
+    input,textarea,select,button,.button{font:inherit;width:100%;box-sizing:border-box;margin:4px 0 12px;padding:8px}
     button,.button{width:auto;border:1px solid #111;border-radius:999px;background:#111;color:#fff;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;line-height:1.2}
     .button.ghost,button.ghost{background:transparent;color:#111;border-color:#bbb}
     .actions{display:flex;gap:8px;align-items:center;margin-top:12px}
@@ -19,6 +19,7 @@
     .intro h1{font-size:2rem;margin:0 0 12px}
     .intro p{margin:0 0 24px;color:#333}
     .intro .button{min-width:112px}
+    .intro-link{margin:12px 0 0}
     .auth-page{min-height:calc(100vh - 64px);display:flex;align-items:center;justify-content:center}
     .auth-form{width:100%;max-width:360px}
     .auth-logo{display:block;width:64px;height:64px;margin:0 auto 16px}
@@ -67,4 +68,8 @@
     .token-date{color:#888;font-size:.85rem}
     .token-revoke-form{margin:0}
     .token-revoke-form button{padding:4px 12px;font-size:.85rem}
+    .admin-error{border:1px solid #e0aaaa;background:#fff5f5;border-radius:8px;padding:10px 12px}
+    .admin-users{width:100%;border-collapse:collapse;margin-top:12px}
+    .admin-users th,.admin-users td{text-align:left;border-top:1px solid #eee;padding:8px 6px}
+    .admin-users th{font-size:.85rem;color:#555}
 {{end}}

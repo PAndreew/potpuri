@@ -4,8 +4,23 @@
   <div>
     <img src="/static/rose.svg" alt="" style="width:64px;height:64px;margin-bottom:24px;opacity:.6">
     <h1 style="font-size:2rem;margin:0 0 12px">Become a Patron</h1>
-    <p style="color:#777;max-width:360px;margin:0 auto 24px">Coming soon.</p>
-    <a href="/" class="muted-link">Back to Potpuri</a>
+    {{if .Patron}}
+      <p style="color:#777;max-width:360px;margin:0 auto 24px">Your account is already on the Patron tier.</p>
+      <a href="/account" class="muted-link">Back to account</a>
+    {{else if not .UserID}}
+      <p style="color:#777;max-width:360px;margin:0 auto 24px">Sign in to upgrade your account.</p>
+      <p><a href="/login" class="button">Sign in</a></p>
+      <a href="/" class="muted-link">Back to Potpuri</a>
+    {{else if .StripeConfigured}}
+      <p style="color:#777;max-width:360px;margin:0 auto 24px">Support Potpuri and unlock higher storage, larger uploads, and unlimited API tokens.</p>
+      <form method="post" action="/billing/checkout">
+        <button>Continue to Stripe</button>
+      </form>
+      <a href="/" class="muted-link">Back to Potpuri</a>
+    {{else}}
+      <p style="color:#777;max-width:360px;margin:0 auto 24px">Patron checkout is not configured yet.</p>
+      <a href="/" class="muted-link">Back to Potpuri</a>
+    {{end}}
   </div>
 </div>
 {{end}}

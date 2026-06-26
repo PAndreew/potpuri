@@ -6,6 +6,8 @@
 
   <section>
     <p>Signed in as <strong>{{.Email}}</strong></p>
+    <p>Plan: <strong>{{if .Patron}}Patron{{else}}Free{{end}}</strong></p>
+    {{if not .Patron}}<p><a href="/patron">Become a Patron</a></p>{{end}}
     <h3>API Tokens</h3>
     <p><a href="/tokens">Manage API tokens and bookmarklet →</a></p>
     <h3>Export your data</h3>

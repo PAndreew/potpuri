@@ -3,12 +3,16 @@ package web_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -233,8 +237,9 @@ func TestSignedOutHomeShowsIntroAndSignInLink(t *testing.T) {
 		`class="signed-out"`,
 		`src="/static/rose.svg"`,
 		`<h1>Potpuri</h1>`,
-		`Potpuri is a minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.`,
+		`Potpuri is a free, secure minimalistic digital treasue trove. You can save links, files, photos, and markdown notes for later. No tracking, no LLM bullshit.`,
 		`href="/login">Sign in</a>`,
+		`href="https://github.com/PAndreew/potpuri">GitHub</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("signed out home missing %s: %s", want, body)
@@ -267,6 +272,99 @@ func TestLoginPageShowsCenteredSignInFormWithSignUpLink(t *testing.T) {
 	}
 	if strings.Contains(body, `action="/register"`) {
 		t.Fatalf("login page should link to sign up rather than render the sign up form: %s", body)
+	}
+}
+
+func TestAdminShowsSignedUpUsersAndPatronStatus(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "owner@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetPatron(context.Background(), user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
+	server := web.NewServerWithConfig(svc, web.Config{AdminEmail: "owner@example.com"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin page failed: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"owner@example.com", ">Patron<", "<th>Email</th>", "<th>Signed up</th>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin page missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestAdminRejectsNonAdminUser(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "someone@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := mustLogin(t, svc, user.Email, "correct horse")
+	server := web.NewServerWithConfig(svc, web.Config{AdminEmail: "owner@example.com"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin should be forbidden, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestStripeWebhookSetsPatronFromCheckoutSession(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "stripe@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServerWithConfig(svc, web.Config{
+		StripeSecretKey:     "sk_test_x",
+		StripePriceID:       "price_x",
+		StripeWebhookSecret: "whsec_test",
+	})
+	body := `{"type":"checkout.session.completed","data":{"object":{"client_reference_id":"` + user.ID + `","metadata":{"user_id":"` + user.ID + `"}}}}`
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte("whsec_test"))
+	_, _ = mac.Write([]byte(timestamp + "." + body))
+	signature := "t=" + timestamp + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/stripe/webhook", strings.NewReader(body))
+	req.Header.Set("Stripe-Signature", signature)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("webhook failed: %d %s", rec.Code, rec.Body.String())
+	}
+	updated, err := svc.GetUser(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Patron {
+		t.Fatalf("expected Stripe webhook to set patron")
 	}
 }
 

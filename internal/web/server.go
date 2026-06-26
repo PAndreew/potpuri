@@ -2,15 +2,21 @@ package web
 
 import (
 	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,12 +65,18 @@ type Server struct {
 	totpConfirmTpl  *template.Template
 	totpRecoveryTpl *template.Template
 	patronTpl       *template.Template
+	adminTpl        *template.Template
 	config          Config
 }
 
 type Config struct {
-	AllowRegistration bool
-	SecureCookies     bool
+	AllowRegistration   bool
+	SecureCookies       bool
+	AdminEmail          string
+	StripeSecretKey     string
+	StripePriceID       string
+	StripeWebhookSecret string
+	PublicURL           string
 }
 
 func NewServer(svc *usecase.Service) *Server {
@@ -85,6 +97,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		totpRecoveryTpl: parsePage("totp_recovery.html"),
 		loginTOTPTpl:    parsePage("login_totp.html"),
 		patronTpl:       parsePage("patron.html"),
+		adminTpl:        parsePage("admin.html"),
 		config:          config,
 	}
 }
@@ -115,6 +128,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/account/2fa/confirm", s.confirm2faHTML)
 	mux.HandleFunc("/account/2fa/disable", s.disable2faHTML)
 	mux.HandleFunc("/patron", s.patronHTML)
+	mux.HandleFunc("/billing/checkout", s.checkoutHTML)
+	mux.HandleFunc("/stripe/webhook", s.stripeWebhook)
+	mux.HandleFunc("/admin", s.adminHTML)
 	mux.HandleFunc("/share", s.shareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
@@ -497,6 +513,7 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 		"UserID":      userID,
 		"Email":       user.Email,
 		"TOTPEnabled": user.TOTPEnabled,
+		"Patron":      user.Patron,
 	})
 }
 
@@ -665,7 +682,91 @@ func writeNetscapeBookmarks(w io.Writer, items []domain.Item) {
 }
 
 func (s *Server) patronHTML(w http.ResponseWriter, r *http.Request) {
-	_ = s.patronTpl.Execute(w, nil)
+	userID, _ := s.currentUserID(r)
+	var patron bool
+	if userID != "" {
+		if user, err := s.svc.GetUser(r.Context(), userID); err == nil {
+			patron = user.Patron
+		}
+	}
+	_ = s.patronTpl.Execute(w, map[string]any{
+		"UserID":           userID,
+		"Patron":           patron,
+		"StripeConfigured": s.stripeConfigured(),
+	})
+}
+
+func (s *Server) checkoutHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/patron", http.StatusSeeOther)
+		return
+	}
+	if !s.stripeConfigured() {
+		http.Error(w, "Stripe is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	user, err := s.svc.GetUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	checkoutURL, err := s.createStripeCheckoutSession(r, user.ID, user.Email)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	http.Redirect(w, r, checkoutURL, http.StatusSeeOther)
+}
+
+func (s *Server) adminHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	users, err := s.svc.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := map[string]any{}
+	data["Users"] = users
+	_ = s.adminTpl.Execute(w, data)
+}
+
+func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	adminEmail := strings.TrimSpace(strings.ToLower(s.config.AdminEmail))
+	if adminEmail == "" {
+		http.Error(w, "admin email is not configured", http.StatusServiceUnavailable)
+		return false
+	}
+	cookie, err := r.Cookie("potpuri_session")
+	if err != nil || cookie.Value == "" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return false
+	}
+	userID, err := s.svc.UserIDForSession(r.Context(), cookie.Value)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return false
+	}
+	user, err := s.svc.GetUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "admin access denied", http.StatusForbidden)
+		return false
+	}
+	if strings.TrimSpace(strings.ToLower(user.Email)) != adminEmail {
+		http.Error(w, "admin access denied", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (s *Server) shareHTML(w http.ResponseWriter, r *http.Request) {
@@ -752,6 +853,170 @@ func (s *Server) revokeTokenHTML(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) setSession(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{Name: "potpuri_session", Value: token, Path: "/", HttpOnly: true, Secure: s.config.SecureCookies, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 60 * 60})
+}
+
+func (s *Server) stripeConfigured() bool {
+	return s.config.StripeSecretKey != "" && s.config.StripePriceID != "" && s.config.StripeWebhookSecret != ""
+}
+
+func (s *Server) createStripeCheckoutSession(r *http.Request, userID, email string) (string, error) {
+	baseURL := strings.TrimRight(s.config.PublicURL, "/")
+	if baseURL == "" {
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		baseURL = scheme + "://" + r.Host
+	}
+	form := url.Values{}
+	form.Set("mode", "subscription")
+	form.Set("line_items[0][price]", s.config.StripePriceID)
+	form.Set("line_items[0][quantity]", "1")
+	form.Set("success_url", baseURL+"/account?patron=success")
+	form.Set("cancel_url", baseURL+"/patron")
+	form.Set("client_reference_id", userID)
+	form.Set("customer_email", email)
+	form.Set("metadata[user_id]", userID)
+	form.Set("subscription_data[metadata][user_id]", userID)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "https://api.stripe.com/v1/checkout/sessions", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(s.config.StripeSecretKey, "")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("Stripe checkout failed: %s", strings.TrimSpace(string(body)))
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", err
+	}
+	if out.URL == "" {
+		return "", fmt.Errorf("Stripe checkout response did not include a URL")
+	}
+	return out.URL, nil
+}
+
+func (s *Server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.stripeConfigured() {
+		http.Error(w, "Stripe is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := verifyStripeSignature(body, r.Header.Get("Stripe-Signature"), s.config.StripeWebhookSecret, time.Now()); err != nil {
+		http.Error(w, "invalid Stripe signature", http.StatusBadRequest)
+		return
+	}
+	var event stripeEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.applyStripeEvent(r.Context(), event); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type stripeEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		Object json.RawMessage `json:"object"`
+	} `json:"data"`
+}
+
+func (s *Server) applyStripeEvent(ctx context.Context, event stripeEvent) error {
+	switch event.Type {
+	case "checkout.session.completed":
+		var session struct {
+			ClientReferenceID string            `json:"client_reference_id"`
+			Metadata          map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(event.Data.Object, &session); err != nil {
+			return err
+		}
+		userID := firstNonEmpty(session.ClientReferenceID, session.Metadata["user_id"])
+		if userID == "" {
+			return fmt.Errorf("Stripe checkout session is missing user_id")
+		}
+		return s.svc.SetPatron(ctx, userID, true)
+	case "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted":
+		var sub struct {
+			Status   string            `json:"status"`
+			Metadata map[string]string `json:"metadata"`
+		}
+		if err := json.Unmarshal(event.Data.Object, &sub); err != nil {
+			return err
+		}
+		userID := sub.Metadata["user_id"]
+		if userID == "" {
+			return fmt.Errorf("Stripe subscription is missing user_id")
+		}
+		return s.svc.SetPatron(ctx, userID, sub.Status == "active" || sub.Status == "trialing")
+	default:
+		return nil
+	}
+}
+
+func verifyStripeSignature(payload []byte, header, secret string, now time.Time) error {
+	var timestamp string
+	var signatures []string
+	for _, part := range strings.Split(header, ",") {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "t":
+			timestamp = value
+		case "v1":
+			signatures = append(signatures, value)
+		}
+	}
+	if timestamp == "" || len(signatures) == 0 {
+		return fmt.Errorf("missing signature")
+	}
+	unixSeconds, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return err
+	}
+	signedAt := time.Unix(unixSeconds, 0)
+	if now.Sub(signedAt) > 5*time.Minute || signedAt.Sub(now) > 5*time.Minute {
+		return fmt.Errorf("stale signature")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(timestamp))
+	_, _ = mac.Write([]byte("."))
+	_, _ = mac.Write(payload)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	for _, sig := range signatures {
+		if hmac.Equal([]byte(expected), []byte(sig)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("signature mismatch")
 }
 
 func splitCSV(raw string) []string {

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="internal/web/static/rose.svg" alt="Potpuri" width="96" height="96">
+</p>
+
 # Potpuri
 
 A minimalist, privacy-focused bookmarking application inspired by Bearblog.
@@ -23,7 +27,7 @@ I — as basically all human beings at this point — use multiple devices to ma
 Here is a list of what Potpuri offers for free:
 
 - Encrypted storage — only you can read your stuff
-- PWA, installable on iOS and Android
+- PWA, installable on Android and iOS*
 - Unlimited devices
 - Bookmarklet to easily save content from your browser
 - iOS Shortcut recipe for saving from the share sheet
@@ -86,3 +90,32 @@ The code is split into clean layers:
 I am following Herman's steps in the sense that I'd like to keep the set of direct contributors narrow, but if you have a feature request or have encountered a bug, please open an issue or write to me directly.
 
 Have a great day and happy hunting.
+
+## iOS Shortcut
+
+*iOS does not expose installed PWAs as Web Share Target apps in the share sheet.
+To save from iOS, create a Shortcut named `Save to Potpuri`, enable `Show in
+Share Sheet`, and let it receive URLs, Safari webpages, and text.
+
+In Potpuri, create one API token from `/tokens`. The same token can be used for
+both the bookmarklet and the iOS Shortcut.
+
+Configure the Shortcut like this:
+
+1. Add `Get Details of Shortcut Input` for `Name`; send it as the `title` form field.
+2. Add `Get Details of Shortcut Input` for `URL`; send it as the `url` form field.
+3. Add `Text` containing `Shortcut Input`; send it as the `text` form field.
+4. Add `Get Contents of URL` using method `POST`, request body `Form`, and this endpoint:
+
+```text
+https://your-domain.example/api/shortcut
+```
+
+Form fields:
+
+```text
+token = your Potpuri API token
+title = Name from Shortcut Input
+url = URL from Shortcut Input
+text = Shortcut Input
+```
