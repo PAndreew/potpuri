@@ -67,6 +67,7 @@ Supporter hosted tier:
   - `photo`
 - Each item stores `created_at`, used for default insertion-date ordering.
 - Mobile PWA supports “add to Potpuri from clipboard” through the Clipboard API when available.
+- iOS supports share-sheet capture through a user-created Shortcut backed by `POST /api/shortcut`, because iOS does not expose PWA Web Share Target entries in the native share sheet.
 - Browser extension supports:
   - Context-menu capture of the current page/link/selection.
   - Add to Potpuri from clipboard.
@@ -150,8 +151,10 @@ Supporter hosted tier:
 - `GET /api/items`
 - `GET /api/items?q=...`
 - `POST /api/clipboard`
+- `POST /api/shortcut`
 
 The browser extension and PWA clipboard action use the JSON API.
+The iOS Shortcut uses a form-encoded API so users can configure it with Shortcuts' built-in “Get Contents of URL” action.
 
 ## Deployment
 
