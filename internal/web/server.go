@@ -73,12 +73,12 @@ func NewServer(svc *usecase.Service) *Server {
 
 func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 	return &Server{
-		svc:         svc,
-		index:       parsePage("index.html"),
-		loginTpl:    parsePage("login.html"),
-		registerTpl: parsePage("register.html"),
-		addTpl:      parsePage("add.html"),
-		editTpl:     parsePage("edit.html"),
+		svc:             svc,
+		index:           parsePage("index.html"),
+		loginTpl:        parsePage("login.html"),
+		registerTpl:     parsePage("register.html"),
+		addTpl:          parsePage("add.html"),
+		editTpl:         parsePage("edit.html"),
 		tokensTpl:       parsePage("tokens.html"),
 		accountTpl:      parsePage("account.html"),
 		totpConfirmTpl:  parsePage("totp_confirm.html"),
@@ -127,6 +127,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/items/blob", s.blobHTML)
 	mux.HandleFunc("/api/items", corsAPI(s.itemsAPI))
 	mux.HandleFunc("/api/clipboard", corsAPI(s.clipboardAPI))
+	mux.HandleFunc("/api/shortcut", corsAPI(s.shortcutAPI))
 	mux.HandleFunc("/manifest.webmanifest", manifest)
 	mux.HandleFunc("/sw.js", serviceWorker)
 	mux.HandleFunc("/static/rose.svg", roseLogo)
@@ -427,6 +428,40 @@ func (s *Server) clipboardAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemInput.UserID = userID
+	item, err := s.svc.CreateItem(r.Context(), itemInput)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, item)
+}
+
+func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	token := strings.TrimSpace(r.FormValue("token"))
+	if token == "" {
+		http.Error(w, "token is required", http.StatusUnauthorized)
+		return
+	}
+	userID, err := s.svc.UserIDForAPIToken(r.Context(), token)
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	itemInput := itemInputFromClipboardText(r.FormValue("text"), r.FormValue("title"), firstNonEmpty(r.FormValue("url"), r.FormValue("source")))
+	if !hasCaptureContent(itemInput) {
+		http.Error(w, "shortcut input is empty", http.StatusBadRequest)
+		return
+	}
+	itemInput.UserID = userID
+	itemInput.Tags = append(itemInput.Tags, "shortcut")
 	item, err := s.svc.CreateItem(r.Context(), itemInput)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

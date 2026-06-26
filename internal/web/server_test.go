@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,15 @@ func mustLogin(t *testing.T, svc *usecase.Service, email, password string) strin
 		t.Fatal(err)
 	}
 	return result.SessionToken
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestItemsAPIRequiresAuthentication(t *testing.T) {
@@ -803,6 +813,101 @@ func TestAPITokenAuthorizesClipboardAndItems(t *testing.T) {
 	}
 	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("expected CORS allow-origin *, got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestShortcutAPISavesSharedURLWithFormToken(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.CreateAPIToken(context.Background(), usecase.CreateAPITokenInput{UserID: user.ID, Name: "iOS Shortcut"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(svc)
+
+	form := url.Values{}
+	form.Set("token", result.RawToken)
+	form.Set("title", "Shared Article")
+	form.Set("url", "https://example.com/shared")
+	form.Set("text", "Worth keeping")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("shortcut save failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one shortcut item, got %d", len(items))
+	}
+	if items[0].Title != "Shared Article" || items[0].SourceURL != "https://example.com/shared" || items[0].Body != "Worth keeping" {
+		t.Fatalf("shortcut item has wrong fields: %#v", items[0])
+	}
+	if !containsString(items[0].Tags, "shortcut") {
+		t.Fatalf("shortcut item missing shortcut tag: %#v", items[0].Tags)
+	}
+}
+
+func TestShortcutAPIRejectsMissingOrInvalidToken(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	server := web.NewServer(svc)
+
+	for _, body := range []string{"text=hello", "token=wrong&text=hello"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		server.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401 for %q, got %d", body, rec.Code)
+		}
+	}
+}
+
+func TestTokensPageShowsIOSShortcutRecipeForNewToken(t *testing.T) {
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-page@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := mustLogin(t, svc, user.Email, "correct horse")
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/tokens?new_token=pt_testtoken&new_name=iOS+Shortcut", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected tokens page, got %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"iOS Shortcut", "/api/shortcut", "Show in Share Sheet", "token = pt_testtoken"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("tokens page missing %q: %s", want, body)
+		}
 	}
 }
 

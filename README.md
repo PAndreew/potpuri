@@ -26,6 +26,7 @@ Here is a list of what Potpuri offers for free:
 - PWA, installable on iOS and Android
 - Unlimited devices
 - Bookmarklet to easily save content from your browser
+- iOS Shortcut recipe for saving from the share sheet
 - Save text in Markdown format
 - Save photos and other files, like PDF docs (max 25 MB per entry)
 - Edit and delete items
