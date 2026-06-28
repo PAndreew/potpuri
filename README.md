@@ -54,6 +54,7 @@ And here are a few additions you get if you become a Patron:
 ## Self-hosting
 
 Potpuri can be self-hosted — see [self-hosting.md](self-hosting.md) for details.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the codebase structure and data flow.
 
 ## Run locally
 
@@ -83,19 +84,6 @@ menu can also save a page, link, selection, or clipboard text.
 4. Create an API token in Potpuri, open the extension options, and enter the Potpuri URL and token.
 
 Package the extension locally with `scripts/package-extension.sh`.
-
-## Architecture
-
-The code is split into clean layers:
-
-- `internal/domain` — entities and value objects
-- `internal/ports` — interfaces between use cases and adapters
-- `internal/usecase` — application behaviour
-- `internal/security` — encryption, search tokenisation, password hashing
-- `internal/storage/postgres` — Postgres adapter
-- `internal/storage/r2` — Cloudflare R2 blob storage adapter
-- `internal/web` — HTTP and PWA adapter
-- `internal/app` — factory wiring
 
 ## Contributing
 
