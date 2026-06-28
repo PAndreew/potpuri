@@ -1111,6 +1111,116 @@ func TestShareTargetSavesPageAndRedirectsHome(t *testing.T) {
 	}
 }
 
+func TestAccountCanSetWeeklyFeedContribution(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "feed-settings@example.com", Password: "correct horse"})
+	session := mustLogin(t, svc, user.Email, "correct horse")
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/account/feed-contribution", strings.NewReader("weekly_tokens=50000"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/account" {
+		t.Fatalf("unexpected response: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/account", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+	for _, want := range []string{"Community translations", `name="weekly_tokens"`, `value="50000"`, "50,000"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("account page missing %q: %s", want, rec.Body.String())
+		}
+	}
+}
+
+func TestFeedServiceEndpointsRequireServiceCredentialAndSettle(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	contributor, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "api-contributor@example.com", Password: "correct horse"})
+	operator, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "api-operator@example.com", Password: "correct horse"})
+	_ = svc.UpdateFeedContribution(context.Background(), contributor.ID, 1000)
+	server := web.NewServerWithConfig(svc, web.Config{FeedServiceToken: "service-secret"})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/feed/contributions", nil)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected service endpoint to reject anonymous request, got %d", rec.Code)
+	}
+
+	body := `{"job_id":"job_http","contributor_user_id":"` + contributor.ID + `","operator_user_id":"` + operator.ID + `","tokens":700}`
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/feed/settlements", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer service-secret")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("settlement failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/feed/settlements", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer service-secret")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"created":false`) {
+		t.Fatalf("retry was not idempotent: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFeedCredentialEndpointRequiresUserSession(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	issuer, _ := security.NewFeedCredentialIssuer("a-signing-secret-with-enough-entropy")
+	svc := usecase.NewService(usecase.NewServiceParams{
+		Users: store, Items: store, Sessions: store, Cipher: cipher,
+		Hasher: security.NewPasswordHasher(), FeedCredentials: issuer,
+	})
+	user, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "feed-token@example.com", Password: "correct horse"})
+	server := web.NewServer(svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/feed/token", nil)
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected anonymous token request to fail, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/feed/token", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: mustLogin(t, svc, user.Email, "correct horse")})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"token":"`) || !strings.Contains(rec.Body.String(), `"expires_at":`) {
+		t.Fatalf("credential request failed: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthenticatedUserCanSaveFeedTranslation(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "feed-save@example.com", Password: "correct horse"})
+	server := web.NewServer(svc)
+	body := `{"title":"Translated article","markdown":"# Bonjour","original_url":"https://example.cn/a","language":"fr"}`
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/feed/save", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: mustLogin(t, svc, user.Email, "correct horse")})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Translated article") {
+		t.Fatalf("save failed: %d %s", rec.Code, rec.Body.String())
+	}
+	items, _ := svc.ListItems(context.Background(), user.ID)
+	if len(items) != 1 || items[0].SourceURL != "https://example.cn/a" {
+		t.Fatalf("translation was not saved: %#v", items)
+	}
+}
+
 func TestShareTargetRequiresSessionCookie(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))

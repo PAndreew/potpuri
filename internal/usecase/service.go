@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrNotFound           = errors.New("not found")
+	ErrInvalidCredentials           = errors.New("invalid credentials")
+	ErrUnauthorized                 = errors.New("unauthorized")
+	ErrNotFound                     = errors.New("not found")
+	ErrInsufficientFeedContribution = ports.ErrInsufficientFeedContribution
 )
 
 // Quotas defines per-tier upload and API token limits.
@@ -78,6 +79,8 @@ type Service struct {
 	recoveries         ports.TOTPRecoveryRepository
 	emailVerifications ports.EmailVerificationRepository
 	secretShares       ports.SecretShareRepository
+	feed               ports.FeedRepository
+	feedCredentials    ports.FeedCredentialIssuer
 	fetcher            ports.PageFetcher
 	mailer             ports.Mailer
 	cipher             ports.ItemCipher
@@ -98,6 +101,8 @@ type NewServiceParams struct {
 	Recoveries         ports.TOTPRecoveryRepository
 	EmailVerifications ports.EmailVerificationRepository
 	SecretShares       ports.SecretShareRepository
+	Feed               ports.FeedRepository
+	FeedCredentials    ports.FeedCredentialIssuer
 	Fetcher            ports.PageFetcher
 	Mailer             ports.Mailer
 	Cipher             ports.ItemCipher
@@ -146,6 +151,12 @@ func NewService(params NewServiceParams) *Service {
 			emailVerifications = repo
 		}
 	}
+	feed := params.Feed
+	if feed == nil {
+		if repo, ok := params.Users.(ports.FeedRepository); ok {
+			feed = repo
+		}
+	}
 	return &Service{
 		users:              params.Users,
 		items:              params.Items,
@@ -157,6 +168,8 @@ func NewService(params NewServiceParams) *Service {
 		recoveries:         recoveries,
 		emailVerifications: emailVerifications,
 		secretShares:       params.SecretShares,
+		feed:               feed,
+		feedCredentials:    params.FeedCredentials,
 		fetcher:            params.Fetcher,
 		mailer:             params.Mailer,
 		cipher:             params.Cipher,

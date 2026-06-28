@@ -18,6 +18,21 @@
   </section>
 
   <section>
+    <h3>Community translations</h3>
+    <p>Allocate up to 10,000,000 tokens each week to community-requested translations. Unused capacity resets each Monday (UTC).</p>
+    <p>
+      Used this week: <strong>{{fmtTokens .FeedContribution.UsedThisWeek}}</strong>
+      · Remaining: <strong>{{fmtTokens .FeedContribution.Remaining}}</strong>
+      · Earned by your harnesses: <strong>{{fmtTokens .FeedContribution.Earned}}</strong>
+    </p>
+    <form method="post" action="/account/feed-contribution">
+      <label for="weekly_tokens">Weekly token contribution</label>
+      <input id="weekly_tokens" name="weekly_tokens" type="number" min="0" max="10000000" step="1" value="{{.FeedContribution.WeeklyLimit}}" required>
+      <button>Save</button>
+    </form>
+  </section>
+
+  <section>
     <h3>URL capture mode</h3>
     <p>When you save a URL without selecting any text, Potpuri can optionally fetch the page for you.</p>
     <form method="post" action="/account/capture-mode">

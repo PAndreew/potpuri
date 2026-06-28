@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/lib/pq"
 
@@ -514,6 +515,33 @@ create table if not exists secret_shares (
   user_id text not null references users(id) on delete cascade,
   created_at timestamptz not null default now()
 );
+
+create table if not exists feed_contributions (
+  user_id text primary key references users(id) on delete cascade,
+  weekly_limit bigint not null check (weekly_limit >= 0),
+  updated_at timestamptz not null
+);
+
+create table if not exists feed_settlements (
+  job_id text primary key,
+  contributor_user_id text not null references users(id) on delete cascade,
+  operator_user_id text not null references users(id) on delete cascade,
+  tokens bigint not null check (tokens > 0),
+  created_at timestamptz not null
+);
+
+create table if not exists feed_token_ledger (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  job_id text not null references feed_settlements(job_id) on delete cascade,
+  amount bigint not null,
+  kind text not null check (kind in ('translation_debit', 'translation_reward')),
+  created_at timestamptz not null,
+  unique (user_id, job_id, kind)
+);
+
+create index if not exists feed_token_ledger_user_created_idx
+  on feed_token_ledger (user_id, created_at desc);
 `
 
 func (s *Store) CreateSecretShare(ctx context.Context, share ports.StoredSecretShare) error {
@@ -529,6 +557,141 @@ func (s *Store) FindAndDeleteSecretShare(ctx context.Context, tokenHash string) 
 		`delete from secret_shares where token_hash = $1 returning token_hash, item_id, user_id`,
 		tokenHash).Scan(&share.TokenHash, &share.ItemID, &share.UserID)
 	return share, err
+}
+
+func (s *Store) SaveFeedContribution(ctx context.Context, contribution domain.FeedContribution) error {
+	_, err := s.db.ExecContext(ctx, `
+insert into feed_contributions (user_id, weekly_limit, updated_at) values ($1, $2, $3)
+on conflict (user_id) do update set weekly_limit = excluded.weekly_limit, updated_at = excluded.updated_at`,
+		contribution.UserID, contribution.WeeklyLimit, contribution.UpdatedAt)
+	return err
+}
+
+func (s *Store) FindFeedContribution(ctx context.Context, userID string) (domain.FeedContribution, error) {
+	var contribution domain.FeedContribution
+	err := s.db.QueryRowContext(ctx, `
+select user_id, weekly_limit, updated_at from feed_contributions where user_id = $1`, userID).
+		Scan(&contribution.UserID, &contribution.WeeklyLimit, &contribution.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.FeedContribution{UserID: userID}, nil
+	}
+	return contribution, err
+}
+
+func (s *Store) ListFeedContributions(ctx context.Context) ([]domain.FeedContribution, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select user_id, weekly_limit, updated_at from feed_contributions where weekly_limit > 0 order by user_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.FeedContribution
+	for rows.Next() {
+		var contribution domain.FeedContribution
+		if err := rows.Scan(&contribution.UserID, &contribution.WeeklyLimit, &contribution.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, contribution)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) FeedTokensUsedSince(ctx context.Context, userID string, since time.Time) (int64, error) {
+	var used int64
+	err := s.db.QueryRowContext(ctx, `
+select coalesce(-sum(amount), 0) from feed_token_ledger
+where user_id = $1 and kind = 'translation_debit' and created_at >= $2`, userID, since).Scan(&used)
+	return used, err
+}
+
+func (s *Store) FeedTokensEarned(ctx context.Context, userID string) (int64, error) {
+	var earned int64
+	err := s.db.QueryRowContext(ctx, `
+select coalesce(sum(amount), 0) from feed_token_ledger
+where user_id = $1 and kind = 'translation_reward'`, userID).Scan(&earned)
+	return earned, err
+}
+
+func (s *Store) ListFeedLedger(ctx context.Context, userID string) ([]domain.FeedLedgerEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select id, user_id, job_id, amount, kind, created_at
+from feed_token_ledger where user_id = $1 order by created_at desc, id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.FeedLedgerEntry
+	for rows.Next() {
+		var entry domain.FeedLedgerEntry
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.JobID, &entry.Amount, &entry.Kind, &entry.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SettleFeedTranslation(ctx context.Context, settlement ports.FeedSettlement, weekStart time.Time) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, settlement.JobID); err != nil {
+		return false, err
+	}
+
+	var existing ports.FeedSettlement
+	err = tx.QueryRowContext(ctx, `
+select job_id, contributor_user_id, operator_user_id, tokens, created_at
+from feed_settlements where job_id = $1`, settlement.JobID).
+		Scan(&existing.JobID, &existing.ContributorUserID, &existing.OperatorUserID, &existing.Tokens, &existing.CreatedAt)
+	if err == nil {
+		if existing.ContributorUserID != settlement.ContributorUserID || existing.OperatorUserID != settlement.OperatorUserID || existing.Tokens != settlement.Tokens {
+			return false, errors.New("job already settled with different values")
+		}
+		return false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+
+	var weeklyLimit int64
+	if err := tx.QueryRowContext(ctx, `
+select weekly_limit from feed_contributions where user_id = $1 for update`, settlement.ContributorUserID).
+		Scan(&weeklyLimit); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ports.ErrInsufficientFeedContribution
+		}
+		return false, err
+	}
+	var used int64
+	if err := tx.QueryRowContext(ctx, `
+select coalesce(-sum(amount), 0) from feed_token_ledger
+where user_id = $1 and kind = 'translation_debit' and created_at >= $2`, settlement.ContributorUserID, weekStart).
+		Scan(&used); err != nil {
+		return false, err
+	}
+	if weeklyLimit-used < settlement.Tokens {
+		return false, ports.ErrInsufficientFeedContribution
+	}
+	if _, err := tx.ExecContext(ctx, `
+insert into feed_settlements (job_id, contributor_user_id, operator_user_id, tokens, created_at)
+values ($1, $2, $3, $4, $5)`, settlement.JobID, settlement.ContributorUserID, settlement.OperatorUserID, settlement.Tokens, settlement.CreatedAt); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+insert into feed_token_ledger (id, user_id, job_id, amount, kind, created_at) values
+($1, $2, $3, $4, 'translation_debit', $5),
+($6, $7, $3, $8, 'translation_reward', $5)`,
+		"fld_"+settlement.JobID+"_debit", settlement.ContributorUserID, settlement.JobID, -settlement.Tokens, settlement.CreatedAt,
+		"fld_"+settlement.JobID+"_reward", settlement.OperatorUserID, settlement.Tokens); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func ParseTags(raw string) []string {

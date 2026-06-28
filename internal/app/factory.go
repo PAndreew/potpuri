@@ -38,6 +38,8 @@ type Factory struct {
 	R2Bucket            string
 	ResendAPIKey        string
 	ResendFromEmail     string
+	FeedServiceToken    string
+	FeedSigningSecret   string
 }
 
 func FactoryFromEnv() Factory {
@@ -61,6 +63,8 @@ func FactoryFromEnv() Factory {
 		R2Bucket:            os.Getenv("R2_BUCKET"),
 		ResendAPIKey:        os.Getenv("RESEND_API_KEY"),
 		ResendFromEmail:     envDefault("RESEND_FROM_EMAIL", "noreply@potpuri.app"),
+		FeedServiceToken:    os.Getenv("POTPURI_FEED_SERVICE_TOKEN"),
+		FeedSigningSecret:   os.Getenv("POTPURI_FEED_SIGNING_SECRET"),
 	}
 }
 
@@ -98,6 +102,14 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 	if f.ResendAPIKey != "" {
 		mailer = &email.ResendMailer{APIKey: f.ResendAPIKey, FromEmail: f.ResendFromEmail}
 	}
+	var feedCredentials ports.FeedCredentialIssuer
+	if f.FeedSigningSecret != "" {
+		feedCredentials, err = security.NewFeedCredentialIssuer(f.FeedSigningSecret)
+		if err != nil {
+			_ = store.Close()
+			return nil, nil, err
+		}
+	}
 	svc := usecase.NewService(usecase.NewServiceParams{
 		Users:              store,
 		Items:              store,
@@ -111,6 +123,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		Cipher:             cipher,
 		Hasher:             security.NewPasswordHasher(),
 		PublicURL:          f.PublicURL,
+		FeedCredentials:    feedCredentials,
 	})
 	handler := web.NewServerWithConfig(svc, web.Config{
 		AllowRegistration:   f.AllowRegistration,
@@ -120,6 +133,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		StripePriceID:       f.StripePriceID,
 		StripeWebhookSecret: f.StripeWebhookSecret,
 		PublicURL:           f.PublicURL,
+		FeedServiceToken:    f.FeedServiceToken,
 	})
 	server := &http.Server{Addr: f.Addr, Handler: handler.Routes()}
 	return server, store.Close, nil

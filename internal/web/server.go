@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
@@ -45,6 +46,7 @@ var templateFuncs = template.FuncMap{
 	"snippet":         snippet,
 	"fmtDate":         fmtDate,
 	"editableText":    editableText,
+	"fmtTokens":       fmtTokens,
 }
 
 func editableText(body string) string {
@@ -81,6 +83,7 @@ type Config struct {
 	StripePriceID       string
 	StripeWebhookSecret string
 	PublicURL           string
+	FeedServiceToken    string
 }
 
 func NewServer(svc *usecase.Service) *Server {
@@ -149,6 +152,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/s/", s.viewSecretShareHTML)
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/capture-mode", s.captureModeSaveHTML)
+	mux.HandleFunc("/account/feed-contribution", s.feedContributionSaveHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
 	mux.HandleFunc("/export", s.exportHandler)
 	mux.HandleFunc("/tokens", s.tokensHTML)
@@ -160,6 +164,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/items", corsAPI(s.itemsAPI))
 	mux.HandleFunc("/api/clipboard", corsAPI(s.clipboardAPI))
 	mux.HandleFunc("/api/shortcut", corsAPI(s.shortcutAPI))
+	mux.HandleFunc("/api/feed/contributions", s.feedContributionsAPI)
+	mux.HandleFunc("/api/feed/settlements", s.feedSettlementsAPI)
+	mux.HandleFunc("/api/feed/token", s.feedTokenAPI)
+	mux.HandleFunc("/api/feed/save", s.feedSaveAPI)
 	mux.HandleFunc("/manifest.webmanifest", manifest)
 	mux.HandleFunc("/sw.js", serviceWorker)
 	mux.HandleFunc("/static/rose.svg", roseLogo)
@@ -569,12 +577,18 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 	if captureMode == "" {
 		captureMode = "url"
 	}
+	feedContribution, err := s.svc.GetFeedContribution(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	_ = s.accountTpl.Execute(w, map[string]any{
-		"UserID":      userID,
-		"Email":       user.Email,
-		"TOTPEnabled": user.TOTPEnabled,
-		"Patron":      user.Patron,
-		"CaptureMode": captureMode,
+		"UserID":           userID,
+		"Email":            user.Email,
+		"TOTPEnabled":      user.TOTPEnabled,
+		"Patron":           user.Patron,
+		"CaptureMode":      captureMode,
+		"FeedContribution": feedContribution,
 	})
 }
 
@@ -694,6 +708,128 @@ func (s *Server) captureModeSaveHTML(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+
+func (s *Server) feedContributionSaveHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	weeklyTokens, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("weekly_tokens")), 10, 64)
+	if err != nil {
+		http.Error(w, "weekly tokens must be a whole number", http.StatusBadRequest)
+		return
+	}
+	if err := s.svc.UpdateFeedContribution(r.Context(), userID, weeklyTokens); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+
+func (s *Server) feedContributionsAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeFeedService(r) {
+		http.Error(w, "invalid service credential", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	capacities, err := s.svc.ListFeedContributionCapacity(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, capacities)
+}
+
+func (s *Server) feedTokenAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	credential, err := s.svc.IssueFeedCredential(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, credential)
+}
+
+func (s *Server) feedSaveAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Error(w, "login required", http.StatusUnauthorized)
+		return
+	}
+	var input usecase.SaveFeedTranslationInput
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 2*1024*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	input.UserID = userID
+	item, err := s.svc.SaveFeedTranslation(r.Context(), input)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, item)
+}
+
+func (s *Server) feedSettlementsAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeFeedService(r) {
+		http.Error(w, "invalid service credential", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var input usecase.SettleFeedTranslationInput
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 16*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	created, err := s.svc.SettleFeedTranslation(r.Context(), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, usecase.ErrInsufficientFeedContribution) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if created {
+		writeJSONStatus(w, http.StatusCreated, map[string]bool{"created": true})
+		return
+	}
+	writeJSON(w, map[string]bool{"created": created})
+}
+
+func (s *Server) authorizeFeedService(r *http.Request) bool {
+	want := sha256.Sum256([]byte(s.config.FeedServiceToken))
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	got := sha256.Sum256([]byte(provided))
+	return s.config.FeedServiceToken != "" && provided != "" && subtle.ConstantTimeCompare(want[:], got[:]) == 1
 }
 
 func (s *Server) deleteAccountHTML(w http.ResponseWriter, r *http.Request) {
@@ -1343,8 +1479,28 @@ func defaultTitle(sourceURL, firstFilename, body string) string {
 	return "Untitled"
 }
 
+func fmtTokens(value int64) string {
+	negative := value < 0
+	if negative {
+		value = -value
+	}
+	digits := strconv.FormatInt(value, 10)
+	for i := len(digits) - 3; i > 0; i -= 3 {
+		digits = digits[:i] + "," + digits[i:]
+	}
+	if negative {
+		return "-" + digits
+	}
+	return digits
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
+	writeJSONStatus(w, http.StatusOK, value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 

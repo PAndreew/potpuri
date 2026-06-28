@@ -8,4 +8,5 @@ coverage/
 dist/
 node_modules/
 CHECKPOINT.md
+FEED_DESIGN.md
 scripts/deploy-vps.sh

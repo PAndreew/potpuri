@@ -2,10 +2,13 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"potpuri/internal/domain"
 )
+
+var ErrInsufficientFeedContribution = errors.New("insufficient feed contribution")
 
 type UserRepository interface {
 	CreateUser(ctx context.Context, user domain.User) error
@@ -157,4 +160,26 @@ type ItemCipher interface {
 type PasswordHasher interface {
 	Hash(password string) (string, error)
 	Verify(hash, password string) bool
+}
+
+type FeedRepository interface {
+	SaveFeedContribution(ctx context.Context, contribution domain.FeedContribution) error
+	FindFeedContribution(ctx context.Context, userID string) (domain.FeedContribution, error)
+	ListFeedContributions(ctx context.Context) ([]domain.FeedContribution, error)
+	FeedTokensUsedSince(ctx context.Context, userID string, since time.Time) (int64, error)
+	FeedTokensEarned(ctx context.Context, userID string) (int64, error)
+	ListFeedLedger(ctx context.Context, userID string) ([]domain.FeedLedgerEntry, error)
+	SettleFeedTranslation(ctx context.Context, settlement FeedSettlement, weekStart time.Time) (bool, error)
+}
+
+type FeedSettlement struct {
+	JobID             string
+	ContributorUserID string
+	OperatorUserID    string
+	Tokens            int64
+	CreatedAt         time.Time
+}
+
+type FeedCredentialIssuer interface {
+	IssueFeedCredential(userID string, scopes []string, issuedAt, expiresAt time.Time) (string, error)
 }

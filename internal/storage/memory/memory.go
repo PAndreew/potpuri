@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"time"
 
 	"potpuri/internal/domain"
 	"potpuri/internal/ports"
@@ -22,6 +23,9 @@ type Store struct {
 	recoveryCodes      map[string]map[string]bool // userID → codeHash → used
 	emailVerifications map[string]ports.StoredEmailVerification
 	secretShares       map[string]ports.StoredSecretShare
+	feedContributions  map[string]domain.FeedContribution
+	feedLedger         []domain.FeedLedgerEntry
+	feedSettlements    map[string]ports.FeedSettlement
 }
 
 func New() *Store {
@@ -34,6 +38,8 @@ func New() *Store {
 		recoveryCodes:      map[string]map[string]bool{},
 		emailVerifications: map[string]ports.StoredEmailVerification{},
 		secretShares:       map[string]ports.StoredSecretShare{},
+		feedContributions:  map[string]domain.FeedContribution{},
+		feedSettlements:    map[string]ports.FeedSettlement{},
 	}
 }
 
@@ -186,7 +192,112 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 			delete(s.apiTokens, hash)
 		}
 	}
+	delete(s.feedContributions, userID)
+	ledger := s.feedLedger[:0]
+	for _, entry := range s.feedLedger {
+		if entry.UserID != userID {
+			ledger = append(ledger, entry)
+		}
+	}
+	s.feedLedger = ledger
+	for jobID, settlement := range s.feedSettlements {
+		if settlement.ContributorUserID == userID || settlement.OperatorUserID == userID {
+			delete(s.feedSettlements, jobID)
+		}
+	}
 	return nil
+}
+
+func (s *Store) SaveFeedContribution(ctx context.Context, contribution domain.FeedContribution) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.feedContributions[contribution.UserID] = contribution
+	return nil
+}
+
+func (s *Store) FindFeedContribution(ctx context.Context, userID string) (domain.FeedContribution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	contribution, ok := s.feedContributions[userID]
+	if !ok {
+		return domain.FeedContribution{UserID: userID}, nil
+	}
+	return contribution, nil
+}
+
+func (s *Store) ListFeedContributions(ctx context.Context) ([]domain.FeedContribution, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]domain.FeedContribution, 0, len(s.feedContributions))
+	for _, contribution := range s.feedContributions {
+		out = append(out, contribution)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	return out, nil
+}
+
+func (s *Store) FeedTokensUsedSince(ctx context.Context, userID string, since time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var used int64
+	for _, entry := range s.feedLedger {
+		if entry.UserID == userID && entry.Kind == "translation_debit" && !entry.CreatedAt.Before(since) {
+			used -= entry.Amount
+		}
+	}
+	return used, nil
+}
+
+func (s *Store) FeedTokensEarned(ctx context.Context, userID string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var earned int64
+	for _, entry := range s.feedLedger {
+		if entry.UserID == userID && entry.Kind == "translation_reward" {
+			earned += entry.Amount
+		}
+	}
+	return earned, nil
+}
+
+func (s *Store) ListFeedLedger(ctx context.Context, userID string) ([]domain.FeedLedgerEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.FeedLedgerEntry
+	for _, entry := range s.feedLedger {
+		if entry.UserID == userID {
+			out = append(out, entry)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) SettleFeedTranslation(ctx context.Context, settlement ports.FeedSettlement, weekStart time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.feedSettlements[settlement.JobID]; ok {
+		if existing.ContributorUserID != settlement.ContributorUserID || existing.OperatorUserID != settlement.OperatorUserID || existing.Tokens != settlement.Tokens {
+			return false, errors.New("job already settled with different values")
+		}
+		return false, nil
+	}
+	contribution := s.feedContributions[settlement.ContributorUserID]
+	var used int64
+	for _, entry := range s.feedLedger {
+		if entry.UserID == settlement.ContributorUserID && entry.Kind == "translation_debit" && !entry.CreatedAt.Before(weekStart) {
+			used -= entry.Amount
+		}
+	}
+	if contribution.WeeklyLimit-used < settlement.Tokens {
+		return false, ports.ErrInsufficientFeedContribution
+	}
+	s.feedSettlements[settlement.JobID] = settlement
+	s.feedLedger = append(s.feedLedger,
+		domain.FeedLedgerEntry{ID: "fld_" + settlement.JobID + "_debit", UserID: settlement.ContributorUserID, JobID: settlement.JobID, Amount: -settlement.Tokens, Kind: "translation_debit", CreatedAt: settlement.CreatedAt},
+		domain.FeedLedgerEntry{ID: "fld_" + settlement.JobID + "_reward", UserID: settlement.OperatorUserID, JobID: settlement.JobID, Amount: settlement.Tokens, Kind: "translation_reward", CreatedAt: settlement.CreatedAt},
+	)
+	return true, nil
 }
 
 func (s *Store) CreateItem(ctx context.Context, item ports.StoredItem) error {
