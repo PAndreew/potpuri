@@ -72,6 +72,18 @@ Then open `http://localhost:8080`.
 go test ./...
 ```
 
+## Browser extension
+
+The Chromium extension saves the current page from its toolbar icon. Its context
+menu can also save a page, link, selection, or clipboard text.
+
+1. Download `potpuri-extension-0.1.0.zip` from the latest GitHub release and extract it.
+2. Open `chrome://extensions` (or `edge://extensions`) and enable Developer mode.
+3. Choose `Load unpacked` and select the extracted folder.
+4. Create an API token in Potpuri, open the extension options, and enter the Potpuri URL and token.
+
+Package the extension locally with `scripts/package-extension.sh`.
+
 ## Architecture
 
 The code is split into clean layers:

@@ -1,14 +1,26 @@
 {
   "manifest_version": 3,
   "name": "Add to Potpuri",
+  "description": "Save pages, links, selected text, and clipboard text to Potpuri.",
   "version": "0.1.0",
-  "permissions": ["contextMenus", "activeTab", "clipboardRead", "storage"],
-  "host_permissions": ["http://localhost:8080/*", "https://*/api/*"],
+  "minimum_chrome_version": "116",
+  "permissions": ["contextMenus", "clipboardRead", "offscreen", "storage"],
+  "host_permissions": ["https://*/api/*", "http://localhost/*", "http://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js"
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "Add to Potpuri"
+    "default_title": "Add page to Potpuri",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   }
 }
