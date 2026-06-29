@@ -183,3 +183,16 @@ type FeedSettlement struct {
 type FeedCredentialIssuer interface {
 	IssueFeedCredential(userID string, scopes []string, issuedAt, expiresAt time.Time) (string, error)
 }
+
+type StoredHarnessCredential struct {
+	domain.HarnessCredential
+	TokenHash string
+}
+
+type HarnessCredentialRepository interface {
+	CreateHarnessCredential(ctx context.Context, credential StoredHarnessCredential) error
+	ListHarnessCredentials(ctx context.Context, userID string) ([]StoredHarnessCredential, error)
+	FindHarnessCredentialByHash(ctx context.Context, tokenHash string) (StoredHarnessCredential, error)
+	RevokeHarnessCredential(ctx context.Context, userID, credentialID string, revokedAt time.Time) error
+	TouchHarnessCredential(ctx context.Context, credentialID string, usedAt time.Time) error
+}

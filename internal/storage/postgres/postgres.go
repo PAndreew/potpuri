@@ -542,6 +542,21 @@ create table if not exists feed_token_ledger (
 
 create index if not exists feed_token_ledger_user_created_idx
   on feed_token_ledger (user_id, created_at desc);
+
+create table if not exists harness_credentials (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  name text not null,
+  provider text not null check (provider in ('codex', 'claude-code')),
+  key_hint text not null,
+  token_hash text not null unique,
+  created_at timestamptz not null,
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+
+create index if not exists harness_credentials_user_created_idx
+  on harness_credentials (user_id, created_at desc);
 `
 
 func (s *Store) CreateSecretShare(ctx context.Context, share ports.StoredSecretShare) error {
@@ -692,6 +707,89 @@ insert into feed_token_ledger (id, user_id, job_id, amount, kind, created_at) va
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *Store) CreateHarnessCredential(ctx context.Context, credential ports.StoredHarnessCredential) error {
+	_, err := s.db.ExecContext(ctx, `
+insert into harness_credentials (id, user_id, name, provider, key_hint, token_hash, created_at)
+values ($1, $2, $3, $4, $5, $6, $7)`,
+		credential.ID, credential.UserID, credential.Name, credential.Provider,
+		credential.KeyHint, credential.TokenHash, credential.CreatedAt)
+	return err
+}
+
+func (s *Store) ListHarnessCredentials(ctx context.Context, userID string) ([]ports.StoredHarnessCredential, error) {
+	rows, err := s.db.QueryContext(ctx, `
+select id, user_id, name, provider, key_hint, token_hash, created_at, last_used_at, revoked_at
+from harness_credentials where user_id = $1 order by created_at desc`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ports.StoredHarnessCredential
+	for rows.Next() {
+		credential, err := scanHarnessCredential(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, credential)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) FindHarnessCredentialByHash(ctx context.Context, tokenHash string) (ports.StoredHarnessCredential, error) {
+	row := s.db.QueryRowContext(ctx, `
+select id, user_id, name, provider, key_hint, token_hash, created_at, last_used_at, revoked_at
+from harness_credentials where token_hash = $1`, tokenHash)
+	return scanHarnessCredential(row.Scan)
+}
+
+func (s *Store) RevokeHarnessCredential(ctx context.Context, userID, credentialID string, revokedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `
+update harness_credentials set revoked_at = $3
+where user_id = $1 and id = $2 and revoked_at is null`, userID, credentialID, revokedAt)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("harness credential not found")
+	}
+	return nil
+}
+
+func (s *Store) TouchHarnessCredential(ctx context.Context, credentialID string, usedAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `
+update harness_credentials set last_used_at = $2 where id = $1 and revoked_at is null`, credentialID, usedAt)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return errors.New("harness credential not found")
+	}
+	return nil
+}
+
+type rowScanner func(dest ...any) error
+
+func scanHarnessCredential(scan rowScanner) (ports.StoredHarnessCredential, error) {
+	var credential ports.StoredHarnessCredential
+	var lastUsed, revoked sql.NullTime
+	err := scan(
+		&credential.ID, &credential.UserID, &credential.Name, &credential.Provider,
+		&credential.KeyHint, &credential.TokenHash, &credential.CreatedAt, &lastUsed, &revoked,
+	)
+	if err != nil {
+		return ports.StoredHarnessCredential{}, err
+	}
+	if lastUsed.Valid {
+		credential.LastUsedAt = &lastUsed.Time
+	}
+	if revoked.Valid {
+		credential.RevokedAt = &revoked.Time
+	}
+	return credential, nil
 }
 
 func ParseTags(raw string) []string {

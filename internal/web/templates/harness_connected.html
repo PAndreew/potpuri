@@ -1,0 +1,17 @@
+{{define "title"}}Harness connected - Potpuri{{end}}
+{{define "body"}}
+  {{template "header" .}}
+  <a class="top-link" href="/account">Back to settings</a>
+  <h2>Harness connected</h2>
+  <p><strong>{{.Harness.Name}}</strong> now has a separate {{.Setup.ProviderLabel}} credential.</p>
+  <div class="token-banner">
+    <strong>Copy this key now. It is shown only once.</strong>
+    <pre>{{.Setup.RawKey}}</pre>
+  </div>
+  <h3>Connect {{.Setup.ProviderLabel}}</h3>
+  <p><small>The Potpuri Feed service must be running at the configured MCP URL before the connection can become active.</small></p>
+  <p>Run the following command{{if gt (len .Setup.Commands) 1}}s{{end}} on the machine that will operate the harness:</p>
+  {{range .Setup.Commands}}<pre>{{.}}</pre>{{end}}
+  <p><small>Store the key as a secret. It grants only heartbeat, claim, and submission access and can be revoked from settings.</small></p>
+  {{template "sw-script" .}}
+{{end}}

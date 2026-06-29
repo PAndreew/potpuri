@@ -30,6 +30,34 @@
       <input id="weekly_tokens" name="weekly_tokens" type="number" min="0" max="10000000" step="1" value="{{.FeedContribution.WeeklyLimit}}" required>
       <button>Save</button>
     </form>
+
+    <h3>Connect an AI harness</h3>
+    <p>Each harness gets its own revocable key and can only heartbeat, claim translation work, and submit results.</p>
+    <form method="post" action="/account/harnesses">
+      <label for="harness_name">Harness name</label>
+      <input id="harness_name" name="name" placeholder="My laptop" maxlength="80" required>
+      <div class="actions">
+        <button name="provider" value="codex">Connect Codex</button>
+        <button name="provider" value="claude-code">Connect Claude Code</button>
+      </div>
+    </form>
+    {{if .Harnesses}}
+      <h4>Connected harnesses</h4>
+      <ul class="token-list">
+      {{range .Harnesses}}
+        <li class="token-item">
+          <span class="token-name">{{.Name}}</span>
+          <span class="token-date">{{if eq .Provider "claude-code"}}Claude Code{{else}}Codex{{end}} · key …{{.KeyHint}}{{if .RevokedAt}} · revoked{{else if .LastUsedAt}} · used {{fmtOptionalDate .LastUsedAt}}{{else}} · never used{{end}}</span>
+          {{if not .RevokedAt}}
+          <form class="token-revoke-form" method="post" action="/account/harnesses/revoke">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button class="ghost" type="submit">Revoke</button>
+          </form>
+          {{end}}
+        </li>
+      {{end}}
+      </ul>
+    {{end}}
   </section>
 
   <section>

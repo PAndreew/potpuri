@@ -47,6 +47,7 @@ var templateFuncs = template.FuncMap{
 	"fmtDate":         fmtDate,
 	"editableText":    editableText,
 	"fmtTokens":       fmtTokens,
+	"fmtOptionalDate": fmtOptionalDate,
 }
 
 func editableText(body string) string {
@@ -72,6 +73,7 @@ type Server struct {
 	docsTpl         *template.Template
 	tosTpl          *template.Template
 	privacyTpl      *template.Template
+	harnessTpl      *template.Template
 	config          Config
 }
 
@@ -84,6 +86,7 @@ type Config struct {
 	StripeWebhookSecret string
 	PublicURL           string
 	FeedServiceToken    string
+	FeedMCPURL          string
 }
 
 func NewServer(svc *usecase.Service) *Server {
@@ -109,6 +112,7 @@ func NewServerWithConfig(svc *usecase.Service, config Config) *Server {
 		docsTpl:         parsePage("docs.html"),
 		tosTpl:          parsePage("tos.html"),
 		privacyTpl:      parsePage("privacy.html"),
+		harnessTpl:      parsePage("harness_connected.html"),
 		config:          config,
 	}
 }
@@ -153,6 +157,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/account", s.accountHTML)
 	mux.HandleFunc("/account/capture-mode", s.captureModeSaveHTML)
 	mux.HandleFunc("/account/feed-contribution", s.feedContributionSaveHTML)
+	mux.HandleFunc("/account/harnesses", s.harnessesHTML)
+	mux.HandleFunc("/account/harnesses/revoke", s.revokeHarnessHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
 	mux.HandleFunc("/export", s.exportHandler)
 	mux.HandleFunc("/tokens", s.tokensHTML)
@@ -168,6 +174,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/feed/settlements", s.feedSettlementsAPI)
 	mux.HandleFunc("/api/feed/token", s.feedTokenAPI)
 	mux.HandleFunc("/api/feed/save", s.feedSaveAPI)
+	mux.HandleFunc("/api/feed/harness-credentials/introspect", s.harnessIntrospectionAPI)
 	mux.HandleFunc("/manifest.webmanifest", manifest)
 	mux.HandleFunc("/sw.js", serviceWorker)
 	mux.HandleFunc("/static/rose.svg", roseLogo)
@@ -582,6 +589,11 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	harnesses, err := s.svc.ListHarnessCredentials(r.Context(), userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	_ = s.accountTpl.Execute(w, map[string]any{
 		"UserID":           userID,
 		"Email":            user.Email,
@@ -589,6 +601,7 @@ func (s *Server) accountHTML(w http.ResponseWriter, r *http.Request) {
 		"Patron":           user.Patron,
 		"CaptureMode":      captureMode,
 		"FeedContribution": feedContribution,
+		"Harnesses":        harnesses,
 	})
 }
 
@@ -732,6 +745,49 @@ func (s *Server) feedContributionSaveHTML(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
+func (s *Server) harnessesHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	result, err := s.svc.CreateHarnessCredential(r.Context(), usecase.CreateHarnessCredentialInput{
+		UserID: userID, Name: r.FormValue("name"), Provider: r.FormValue("provider"),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	setup, err := harnessSetupFor(string(result.Credential.Provider), result.RawKey, s.feedMCPURL())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	noStoreHTML(w)
+	_ = s.harnessTpl.Execute(w, map[string]any{"UserID": userID, "Harness": result.Credential, "Setup": setup})
+}
+
+func (s *Server) revokeHarnessHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := s.svc.RevokeHarnessCredential(r.Context(), userID, r.FormValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
+}
+
 func (s *Server) feedContributionsAPI(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeFeedService(r) {
 		http.Error(w, "invalid service credential", http.StatusUnauthorized)
@@ -791,6 +847,81 @@ func (s *Server) feedSaveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, item)
+}
+
+func (s *Server) harnessIntrospectionAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeFeedService(r) {
+		http.Error(w, "invalid service credential", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var input struct {
+		Key string `json:"key"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 8*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	identity, err := s.svc.AuthenticateHarnessCredential(r.Context(), input.Key)
+	if err != nil {
+		writeJSON(w, map[string]bool{"active": false})
+		return
+	}
+	writeJSON(w, struct {
+		Active bool `json:"active"`
+		usecase.HarnessIdentity
+	}{Active: true, HarnessIdentity: identity})
+}
+
+func (s *Server) feedMCPURL() string {
+	if strings.TrimSpace(s.config.FeedMCPURL) != "" {
+		return strings.TrimRight(s.config.FeedMCPURL, "/")
+	}
+	if strings.TrimSpace(s.config.PublicURL) != "" {
+		return strings.TrimRight(s.config.PublicURL, "/") + "/feed/mcp"
+	}
+	return "http://localhost:8080/feed/mcp"
+}
+
+type harnessSetup struct {
+	ProviderLabel string
+	RawKey        string
+	Commands      []string
+}
+
+type harnessSetupAdapter interface {
+	Setup(rawKey, mcpURL string) harnessSetup
+}
+
+type codexHarnessSetup struct{}
+
+func (codexHarnessSetup) Setup(rawKey, mcpURL string) harnessSetup {
+	return harnessSetup{ProviderLabel: "Codex", RawKey: rawKey, Commands: []string{
+		"export POTPURI_HARNESS_KEY='" + rawKey + "'",
+		"codex mcp add potpuri-feed --url " + mcpURL + " --bearer-token-env-var POTPURI_HARNESS_KEY",
+	}}
+}
+
+type claudeHarnessSetup struct{}
+
+func (claudeHarnessSetup) Setup(rawKey, mcpURL string) harnessSetup {
+	return harnessSetup{ProviderLabel: "Claude Code", RawKey: rawKey, Commands: []string{
+		"claude mcp add --transport http --scope user potpuri-feed " + mcpURL + " --header \"Authorization: Bearer " + rawKey + "\"",
+	}}
+}
+
+func harnessSetupFor(provider, rawKey, mcpURL string) (harnessSetup, error) {
+	adapters := map[string]harnessSetupAdapter{"codex": codexHarnessSetup{}, "claude-code": claudeHarnessSetup{}}
+	adapter, ok := adapters[provider]
+	if !ok {
+		return harnessSetup{}, fmt.Errorf("unsupported harness provider")
+	}
+	return adapter.Setup(rawKey, mcpURL), nil
 }
 
 func (s *Server) feedSettlementsAPI(w http.ResponseWriter, r *http.Request) {
@@ -1492,6 +1623,13 @@ func fmtTokens(value int64) string {
 		return "-" + digits
 	}
 	return digits
+}
+
+func fmtOptionalDate(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return fmtDate(*value)
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

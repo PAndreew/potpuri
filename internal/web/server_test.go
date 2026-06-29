@@ -1221,6 +1221,76 @@ func TestAuthenticatedUserCanSaveFeedTranslation(t *testing.T) {
 	}
 }
 
+func TestSettingsCreatesProviderSpecificHarnessConnection(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "connect@example.com", Password: "correct horse"})
+	server := web.NewServerWithConfig(svc, web.Config{FeedMCPURL: "https://feed.example.com/mcp"})
+	session := mustLogin(t, svc, user.Email, "correct horse")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/account/harnesses", strings.NewReader("provider=codex&name=Laptop+Codex"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create failed: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"Harness connected", "phk_", "POTPURI_HARNESS_KEY", "codex mcp add potpuri-feed", "https://feed.example.com/mcp", "shown only once"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("connection page missing %q: %s", want, rec.Body.String())
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/account/harnesses", strings.NewReader("provider=claude-code&name=Desktop+Claude"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+	for _, want := range []string{"Claude Code", "claude mcp add --transport http --scope user", "Authorization: Bearer phk_"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("Claude connection page missing %q: %s", want, rec.Body.String())
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/account", nil)
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
+	server.Routes().ServeHTTP(rec, req)
+	for _, want := range []string{"Connect an AI harness", "Connect Codex", "Connect Claude Code", "Laptop Codex", "Desktop Claude", "Revoke"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("settings missing %q: %s", want, rec.Body.String())
+		}
+	}
+	if strings.Contains(rec.Body.String(), "phk_") {
+		t.Fatal("settings page exposed a previously issued raw harness key")
+	}
+}
+
+func TestFeedServiceCanIntrospectHarnessCredential(t *testing.T) {
+	store := memory.New()
+	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
+	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
+	user, _ := svc.Register(context.Background(), usecase.RegisterInput{Email: "introspect@example.com", Password: "correct horse"})
+	credential, _ := svc.CreateHarnessCredential(context.Background(), usecase.CreateHarnessCredentialInput{UserID: user.ID, Name: "Claude", Provider: "claude-code"})
+	server := web.NewServerWithConfig(svc, web.Config{FeedServiceToken: "service-secret"})
+
+	body := `{"key":"` + credential.RawKey + `"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/feed/harness-credentials/introspect", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer service-secret")
+	server.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("introspection failed: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"active":true`, `"user_id":"` + user.ID + `"`, `"provider":"claude-code"`, `"harness:claim"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("introspection response missing %q: %s", want, rec.Body.String())
+		}
+	}
+}
+
 func TestShareTargetRequiresSessionCookie(t *testing.T) {
 	store := memory.New()
 	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))

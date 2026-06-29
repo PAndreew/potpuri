@@ -81,6 +81,7 @@ type Service struct {
 	secretShares       ports.SecretShareRepository
 	feed               ports.FeedRepository
 	feedCredentials    ports.FeedCredentialIssuer
+	harnessCredentials ports.HarnessCredentialRepository
 	fetcher            ports.PageFetcher
 	mailer             ports.Mailer
 	cipher             ports.ItemCipher
@@ -103,6 +104,7 @@ type NewServiceParams struct {
 	SecretShares       ports.SecretShareRepository
 	Feed               ports.FeedRepository
 	FeedCredentials    ports.FeedCredentialIssuer
+	HarnessCredentials ports.HarnessCredentialRepository
 	Fetcher            ports.PageFetcher
 	Mailer             ports.Mailer
 	Cipher             ports.ItemCipher
@@ -157,6 +159,12 @@ func NewService(params NewServiceParams) *Service {
 			feed = repo
 		}
 	}
+	harnessCredentials := params.HarnessCredentials
+	if harnessCredentials == nil {
+		if repo, ok := params.Users.(ports.HarnessCredentialRepository); ok {
+			harnessCredentials = repo
+		}
+	}
 	return &Service{
 		users:              params.Users,
 		items:              params.Items,
@@ -170,6 +178,7 @@ func NewService(params NewServiceParams) *Service {
 		secretShares:       params.SecretShares,
 		feed:               feed,
 		feedCredentials:    params.FeedCredentials,
+		harnessCredentials: harnessCredentials,
 		fetcher:            params.Fetcher,
 		mailer:             params.Mailer,
 		cipher:             params.Cipher,

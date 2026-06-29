@@ -26,6 +26,7 @@ type Store struct {
 	feedContributions  map[string]domain.FeedContribution
 	feedLedger         []domain.FeedLedgerEntry
 	feedSettlements    map[string]ports.FeedSettlement
+	harnessCredentials map[string]ports.StoredHarnessCredential
 }
 
 func New() *Store {
@@ -40,6 +41,7 @@ func New() *Store {
 		secretShares:       map[string]ports.StoredSecretShare{},
 		feedContributions:  map[string]domain.FeedContribution{},
 		feedSettlements:    map[string]ports.FeedSettlement{},
+		harnessCredentials: map[string]ports.StoredHarnessCredential{},
 	}
 }
 
@@ -205,7 +207,73 @@ func (s *Store) DeleteUser(ctx context.Context, userID string) error {
 			delete(s.feedSettlements, jobID)
 		}
 	}
+	for hash, credential := range s.harnessCredentials {
+		if credential.UserID == userID {
+			delete(s.harnessCredentials, hash)
+		}
+	}
 	return nil
+}
+
+func (s *Store) CreateHarnessCredential(ctx context.Context, credential ports.StoredHarnessCredential) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.harnessCredentials[credential.TokenHash]; exists {
+		return errors.New("harness credential already exists")
+	}
+	s.harnessCredentials[credential.TokenHash] = credential
+	return nil
+}
+
+func (s *Store) ListHarnessCredentials(ctx context.Context, userID string) ([]ports.StoredHarnessCredential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []ports.StoredHarnessCredential
+	for _, credential := range s.harnessCredentials {
+		if credential.UserID == userID {
+			out = append(out, credential)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *Store) FindHarnessCredentialByHash(ctx context.Context, tokenHash string) (ports.StoredHarnessCredential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	credential, ok := s.harnessCredentials[tokenHash]
+	if !ok {
+		return ports.StoredHarnessCredential{}, errors.New("harness credential not found")
+	}
+	return credential, nil
+}
+
+func (s *Store) RevokeHarnessCredential(ctx context.Context, userID, credentialID string, revokedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, credential := range s.harnessCredentials {
+		if credential.ID == credentialID && credential.UserID == userID && credential.RevokedAt == nil {
+			t := revokedAt
+			credential.RevokedAt = &t
+			s.harnessCredentials[hash] = credential
+			return nil
+		}
+	}
+	return errors.New("harness credential not found")
+}
+
+func (s *Store) TouchHarnessCredential(ctx context.Context, credentialID string, usedAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, credential := range s.harnessCredentials {
+		if credential.ID == credentialID && credential.RevokedAt == nil {
+			t := usedAt
+			credential.LastUsedAt = &t
+			s.harnessCredentials[hash] = credential
+			return nil
+		}
+	}
+	return errors.New("harness credential not found")
 }
 
 func (s *Store) SaveFeedContribution(ctx context.Context, contribution domain.FeedContribution) error {

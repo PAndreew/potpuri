@@ -65,9 +65,9 @@ flowchart TB
 - `internal/app` reads configuration and wires concrete adapters into the service and HTTP server.
 - `internal/web` owns routes, authentication transport, server-rendered templates, the JSON API, and PWA resources.
 - `internal/usecase` owns application workflows, authorization rules, quotas, capture behavior, and encryption orchestration.
-- `internal/domain` contains the user and item domain types.
+- `internal/domain` contains user, item, feed-accounting, and harness-credential domain types.
 - `internal/ports` defines the interfaces used by the use-case layer.
-- `internal/storage/postgres` stores users, sessions, encrypted item metadata, and blob metadata.
+- `internal/storage/postgres` stores users, sessions, encrypted item metadata, blob metadata, feed accounting, and hashed harness credentials.
 - `internal/storage/r2` optionally stores encrypted blob content outside PostgreSQL.
 - `internal/security` provides encryption, password hashing, and encrypted search token generation.
 - `internal/fetch` optionally retrieves page metadata or content during URL capture.

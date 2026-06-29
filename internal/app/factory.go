@@ -40,6 +40,7 @@ type Factory struct {
 	ResendFromEmail     string
 	FeedServiceToken    string
 	FeedSigningSecret   string
+	FeedMCPURL          string
 }
 
 func FactoryFromEnv() Factory {
@@ -65,6 +66,7 @@ func FactoryFromEnv() Factory {
 		ResendFromEmail:     envDefault("RESEND_FROM_EMAIL", "noreply@potpuri.app"),
 		FeedServiceToken:    os.Getenv("POTPURI_FEED_SERVICE_TOKEN"),
 		FeedSigningSecret:   os.Getenv("POTPURI_FEED_SIGNING_SECRET"),
+		FeedMCPURL:          os.Getenv("POTPURI_FEED_MCP_URL"),
 	}
 }
 
@@ -124,6 +126,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		Hasher:             security.NewPasswordHasher(),
 		PublicURL:          f.PublicURL,
 		FeedCredentials:    feedCredentials,
+		HarnessCredentials: store,
 	})
 	handler := web.NewServerWithConfig(svc, web.Config{
 		AllowRegistration:   f.AllowRegistration,
@@ -134,6 +137,7 @@ func (f Factory) Build(ctx context.Context) (*http.Server, func() error, error) 
 		StripeWebhookSecret: f.StripeWebhookSecret,
 		PublicURL:           f.PublicURL,
 		FeedServiceToken:    f.FeedServiceToken,
+		FeedMCPURL:          f.FeedMCPURL,
 	})
 	server := &http.Server{Addr: f.Addr, Handler: handler.Routes()}
 	return server, store.Close, nil
