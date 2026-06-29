@@ -1111,7 +1111,7 @@ func TestShareTargetSavesPageAndRedirectsHome(t *testing.T) {
 	}
 }
 
-func TestAccountCanSetWeeklyFeedContribution(t *testing.T) {
+func TestFeedContributionEndpointRemainsAvailableButAccountControlsAreHidden(t *testing.T) {
 	store := memory.New()
 	cipher, _ := security.NewCipher([]byte("12345678901234567890123456789012"))
 	svc := usecase.NewService(usecase.NewServiceParams{Users: store, Items: store, Sessions: store, Cipher: cipher, Hasher: security.NewPasswordHasher()})
@@ -1132,10 +1132,17 @@ func TestAccountCanSetWeeklyFeedContribution(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/account", nil)
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
 	server.Routes().ServeHTTP(rec, req)
-	for _, want := range []string{"Community translations", `name="weekly_tokens"`, `value="50000"`, "50,000"} {
-		if !strings.Contains(rec.Body.String(), want) {
-			t.Fatalf("account page missing %q: %s", want, rec.Body.String())
+	for _, hidden := range []string{"Community translations", `name="weekly_tokens"`, "Weekly token contribution"} {
+		if strings.Contains(rec.Body.String(), hidden) {
+			t.Fatalf("account page exposed hidden feed setting %q: %s", hidden, rec.Body.String())
 		}
+	}
+	contribution, err := svc.GetFeedContribution(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contribution.WeeklyLimit != 50000 {
+		t.Fatalf("hidden endpoint did not retain functionality: %#v", contribution)
 	}
 }
 
@@ -1258,9 +1265,9 @@ func TestSettingsCreatesProviderSpecificHarnessConnection(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/account", nil)
 	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: session})
 	server.Routes().ServeHTTP(rec, req)
-	for _, want := range []string{"Connect an AI harness", "Connect Codex", "Connect Claude Code", "Laptop Codex", "Desktop Claude", "Revoke"} {
-		if !strings.Contains(rec.Body.String(), want) {
-			t.Fatalf("settings missing %q: %s", want, rec.Body.String())
+	for _, hidden := range []string{"Connect an AI harness", "Connect Codex", "Connect Claude Code", "Laptop Codex", "Desktop Claude", "Revoke"} {
+		if strings.Contains(rec.Body.String(), hidden) {
+			t.Fatalf("settings exposed hidden harness control %q: %s", hidden, rec.Body.String())
 		}
 	}
 	if strings.Contains(rec.Body.String(), "phk_") {
