@@ -529,11 +529,29 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var itemInput usecase.CreateItemInput
+	var hasContent bool
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		var err error
+		itemInput, err = itemInputFromRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Check raw form values before defaultTitle fills in "Untitled" for empty submissions.
+		hasContent = strings.TrimSpace(r.FormValue("title")) != "" ||
+			strings.TrimSpace(r.FormValue("body")) != "" ||
+			strings.TrimSpace(r.FormValue("source_url")) != "" ||
+			len(itemInput.Blobs) > 0
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		itemInput = itemInputFromClipboardText(r.FormValue("text"), r.FormValue("title"), firstNonEmpty(r.FormValue("url"), r.FormValue("source")))
+		hasContent = hasCaptureContent(itemInput)
 	}
-	token := strings.TrimSpace(r.FormValue("token"))
+	token := strings.TrimSpace(firstNonEmpty(r.FormValue("token"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
 	if token == "" {
 		http.Error(w, "token is required", http.StatusUnauthorized)
 		return
@@ -543,8 +561,7 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token", http.StatusUnauthorized)
 		return
 	}
-	itemInput := itemInputFromClipboardText(r.FormValue("text"), r.FormValue("title"), firstNonEmpty(r.FormValue("url"), r.FormValue("source")))
-	if !hasCaptureContent(itemInput) {
+	if !hasContent {
 		http.Error(w, "shortcut input is empty", http.StatusBadRequest)
 		return
 	}
@@ -1497,7 +1514,8 @@ func itemInputFromClipboardText(text, title, sourceURL string) usecase.CreateIte
 func hasCaptureContent(input usecase.CreateItemInput) bool {
 	return strings.TrimSpace(input.Title) != "" ||
 		strings.TrimSpace(input.Body) != "" ||
-		strings.TrimSpace(input.SourceURL) != ""
+		strings.TrimSpace(input.SourceURL) != "" ||
+		len(input.Blobs) > 0
 }
 
 func itemInputFromRequest(r *http.Request) (usecase.CreateItemInput, error) {

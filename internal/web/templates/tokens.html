@@ -14,7 +14,7 @@
     <p>Drag this link to your bookmarks bar. Click it on any page to save it to Potpuri.</p>
     <a class="bookmarklet-link" href="javascript:(function(){var t='{{.NewToken}}',u='{{.BaseURL}}/api/clipboard',s=window.getSelection().toString();fetch(u,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({title:document.title,url:location.href,text:s})}).then(function(r){if(r.ok)alert('Saved to Potpuri!');else r.text().then(function(m){alert('Error: '+m);});}).catch(function(e){alert('Error: '+e);});})();">Save to Potpuri</a>
     <p class="token-hint">You can also call the API directly:<br><code>curl -X POST {{.BaseURL}}/api/clipboard \<br>&nbsp;&nbsp;-H 'Authorization: Bearer {{.NewToken}}' \<br>&nbsp;&nbsp;-H 'Content-Type: application/json' \<br>&nbsp;&nbsp;-d '{"title":"My note","text":"body here"}'</code></p>
-    <h3 class="bookmarklet-heading">iOS Shortcut</h3>
+    <h3 class="bookmarklet-heading">iOS Shortcut — URLs and text</h3>
     <p>Build a Shortcut named <strong>Save to Potpuri</strong>. In Shortcut Details, enable <strong>Show in Share Sheet</strong>, then set <strong>Receive</strong> to URLs, Safari webpages, and text. If it does not appear in an app's share sheet, add <strong>Any</strong> while testing.</p>
     <ol class="shortcut-steps">
       <li>Add <strong>URL</strong> and set it to the endpoint below.</li>
@@ -26,6 +26,17 @@
     <p class="token-hint">Shortcut endpoint:<br><code>{{.BaseURL}}/api/shortcut</code></p>
     <p class="token-hint">Form fields:<br><code>token = {{.NewToken}}<br>title = Name from Shortcut Input<br>url = URL from Shortcut Input<br>text = Shortcut Input</code></p>
     <p class="token-hint">Use <strong>Get Contents of URL</strong>, not <strong>Share</strong> or <strong>Share with Apps</strong>. Those actions hand content to another app; Potpuri needs a POST request to the endpoint above. <strong>Run JavaScript on Webpage</strong> is optional and Safari-only; it can extract selected text or page metadata, but it still needs to pass the result into the same POST request.</p>
+    <h3 class="bookmarklet-heading">iOS Shortcut — Photos and images</h3>
+    <p>To send a photo from the Camera Roll or Photos share sheet, create a separate Shortcut that receives images:</p>
+    <ol class="shortcut-steps">
+      <li>In Shortcut Details enable <strong>Show in Share Sheet</strong> and set <strong>Receive</strong> to <strong>Images</strong> (or <strong>Any</strong>).</li>
+      <li>Add <strong>Get Contents of URL</strong>. Set method to <strong>POST</strong>, request body to <strong>Form</strong>.</li>
+      <li>Add a <strong>Text</strong> field named <code>token</code> with the value <code>{{.NewToken}}</code>.</li>
+      <li>Add a <strong>File</strong> field named <code>file</code> and set its value to <strong>Shortcut Input</strong>.</li>
+      <li>Optionally add a <strong>Text</strong> field named <code>title</code> for a custom title.</li>
+      <li>Set the URL to <code>{{.BaseURL}}/api/shortcut</code>.</li>
+    </ol>
+    <p class="token-hint">The image is stored encrypted alongside any title or notes you add. You can send multiple images by adding more <code>file</code> fields or by using the <strong>Repeat with Each</strong> action.</p>
   </div>
   {{end}}
 

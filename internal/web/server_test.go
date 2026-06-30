@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1886,5 +1887,101 @@ func TestChangePasswordHTMLRequiresLogin(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/login" {
 		t.Fatalf("expected redirect to /login, got %s", loc)
+	}
+}
+
+func buildMultipartShortcutRequest(t *testing.T, token string, fields map[string]string, filename, contentType string, fileBytes []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("token", token)
+	for k, v := range fields {
+		_ = w.WriteField(k, v)
+	}
+	if fileBytes != nil {
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+		h.Set("Content-Type", contentType)
+		part, _ := w.CreatePart(h)
+		_, _ = part.Write(fileBytes)
+	}
+	w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func mustCreateAPIToken(t *testing.T, svc *usecase.Service, userID string) string {
+	t.Helper()
+	result, err := svc.CreateAPIToken(context.Background(), usecase.CreateAPITokenInput{UserID: userID, Name: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.RawToken
+}
+
+func TestShortcutAPIAcceptsImageUpload(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-img@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	fakeImage := []byte{0x89, 0x50, 0x4E, 0x47} // PNG magic bytes
+	req := buildMultipartShortcutRequest(t, apiToken, map[string]string{"title": "My photo"}, "photo.png", "image/png", fakeImage)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if len(items[0].Blobs) != 1 || items[0].Blobs[0].Filename != "photo.png" {
+		t.Fatalf("expected blob photo.png, got %#v", items[0].Blobs)
+	}
+}
+
+func TestShortcutAPIAcceptsImageWithoutTitle(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-notitle@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	fakeImage := []byte{0xFF, 0xD8, 0xFF} // JPEG magic bytes
+	req := buildMultipartShortcutRequest(t, apiToken, nil, "shot.jpg", "image/jpeg", fakeImage)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for image-only upload, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestShortcutAPIRejectsMultipartWithNoContent(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-empty@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	req := buildMultipartShortcutRequest(t, apiToken, nil, "", "", nil)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty multipart, got %d %s", rec.Code, rec.Body.String())
 	}
 }
