@@ -1891,6 +1891,73 @@ func TestChangePasswordHTMLRequiresLogin(t *testing.T) {
 	}
 }
 
+func TestShortcutAPIDecodesBase64URLWhenNoOtherContent(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64-url@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	// Minimal 2-action Shortcut: only token + image=base64(Shortcut Input).
+	// When sharing a URL, Encode Base64 encodes the URL string itself.
+	sharedURL := "https://example.com/article"
+	body := fmt.Sprintf(`{"token":%q,"image":%q}`, apiToken, base64.StdEncoding.EncodeToString([]byte(sharedURL)))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].SourceURL != sharedURL {
+		t.Fatalf("expected source URL %q, got %q", sharedURL, items[0].SourceURL)
+	}
+	if len(items[0].Blobs) != 0 {
+		t.Fatalf("expected no blobs for URL input, got %d", len(items[0].Blobs))
+	}
+}
+
+func TestShortcutAPIDecodesBase64TextWhenNoOtherContent(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64-note@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	noteText := "my shopping list\n- milk\n- eggs"
+	body := fmt.Sprintf(`{"token":%q,"image":%q}`, apiToken, base64.StdEncoding.EncodeToString([]byte(noteText)))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Body != noteText {
+		t.Fatalf("expected body %q, got %q", noteText, items[0].Body)
+	}
+}
+
 func TestShortcutAPIIgnoresBase64WhenNotAnImage(t *testing.T) {
 	svc, _ := newTestWebService(t)
 	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64-text@example.com", Password: "correct horse"})

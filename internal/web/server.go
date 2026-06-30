@@ -570,19 +570,31 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 				// iOS Shortcuts sometimes omits padding
 				imageBytes, err = base64.RawStdEncoding.DecodeString(input.Image)
 			}
-			// Only treat as a blob if the bytes actually look like image data.
-			// This lets the Shortcut always send base64(Shortcut Input) without
-			// branching: text/URL inputs decode to ASCII and are silently ignored.
-			if err == nil && looksLikeImage(imageBytes) {
-				filename := firstNonEmpty(input.Filename, "photo.jpg")
-				mimeType := firstNonEmpty(input.ContentType, detectImageMIME(imageBytes))
-				itemInput.Blobs = append(itemInput.Blobs, usecase.BlobInput{
-					Filename:    filename,
-					ContentType: mimeType,
-					Content:     imageBytes,
-				})
-				if strings.TrimSpace(itemInput.Title) == "" {
-					itemInput.Title = filename
+			if err == nil && len(imageBytes) > 0 {
+				if looksLikeImage(imageBytes) {
+					// Photo: save as encrypted blob.
+					filename := firstNonEmpty(input.Filename, "photo.jpg")
+					mimeType := firstNonEmpty(input.ContentType, detectImageMIME(imageBytes))
+					itemInput.Blobs = append(itemInput.Blobs, usecase.BlobInput{
+						Filename:    filename,
+						ContentType: mimeType,
+						Content:     imageBytes,
+					})
+					if strings.TrimSpace(itemInput.Title) == "" {
+						itemInput.Title = filename
+					}
+				} else if !hasCaptureContent(itemInput) {
+					// Non-image bytes with no other content: the minimal 2-action
+					// Shortcut sends base64(Shortcut Input) for everything, so URL
+					// and text shares arrive here as decoded strings.
+					decoded := strings.TrimSpace(string(imageBytes))
+					if isLikelyURL(decoded) {
+						itemInput.SourceURL = decoded
+						itemInput.Title = decoded
+					} else {
+						itemInput.Body = decoded
+						itemInput.Title = defaultTitle("", "", decoded)
+					}
 				}
 			}
 		}

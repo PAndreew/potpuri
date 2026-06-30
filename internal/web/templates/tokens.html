@@ -15,23 +15,19 @@
     <a class="bookmarklet-link" href="javascript:(function(){var t='{{.NewToken}}',u='{{.BaseURL}}/api/clipboard',s=window.getSelection().toString();fetch(u,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({title:document.title,url:location.href,text:s})}).then(function(r){if(r.ok)alert('Saved to Potpuri!');else r.text().then(function(m){alert('Error: '+m);});}).catch(function(e){alert('Error: '+e);});})();">Save to Potpuri</a>
     <p class="token-hint">You can also call the API directly:<br><code>curl -X POST {{.BaseURL}}/api/clipboard \<br>&nbsp;&nbsp;-H 'Authorization: Bearer {{.NewToken}}' \<br>&nbsp;&nbsp;-H 'Content-Type: application/json' \<br>&nbsp;&nbsp;-d '{"title":"My note","text":"body here"}'</code></p>
     <h3 class="bookmarklet-heading">iOS Shortcut — one shortcut for everything</h3>
-    <p>This single shortcut handles URLs, text, and photos from any share sheet. The server detects image bytes automatically, so always sending base64 is safe — text and URLs are silently ignored as non-image data.</p>
+    <p>Just two actions. <strong>Encode Base64</strong> converts anything iOS gives you — photos become image bytes, URLs and text become readable strings. The server detects which is which.</p>
     <ol class="shortcut-steps">
       <li>In Shortcut Details enable <strong>Show in Share Sheet</strong> and set <strong>Receive</strong> to <strong>Any</strong>.</li>
-      <li>Add <strong>Get Details of Shortcut Input</strong> → <strong>Name</strong>. Save result as <em>ItemTitle</em>.</li>
-      <li>Add <strong>Get Details of Shortcut Input</strong> → <strong>URL</strong>. Save result as <em>ItemURL</em>.</li>
-      <li>Add <strong>Encode Base64</strong> (search "Base64"). Input: <strong>Shortcut Input</strong>, mode: <strong>Encode</strong>. Save result as <em>Encoded</em>.</li>
+      <li>Add <strong>Encode Base64</strong> (search "Base64"). Input: <strong>Shortcut Input</strong>, mode: <strong>Encode</strong>.</li>
       <li>Add <strong>Get Contents of URL</strong>. Method: <strong>POST</strong>, body: <strong>JSON</strong>, URL: <code>{{.BaseURL}}/api/shortcut</code>.</li>
-      <li>Add these JSON fields:
+      <li>Add two JSON fields:
         <ul>
           <li><code>token</code> &rarr; <code>{{.NewToken}}</code></li>
-          <li><code>title</code> &rarr; <em>ItemTitle</em></li>
-          <li><code>url</code> &rarr; <em>ItemURL</em></li>
-          <li><code>image</code> &rarr; <em>Encoded</em></li>
+          <li><code>image</code> &rarr; <strong>Base64 Encoded</strong> (output of step 2)</li>
         </ul>
       </li>
     </ol>
-    <p class="token-hint">No branching needed. Sharing a URL saves a link. Sharing text saves a note. Sharing a photo stores it as an encrypted attachment.</p>
+    <p class="token-hint">Share a URL → saved as a link. Share text → saved as a note. Share a photo → stored as an encrypted attachment. No branching or type-checking needed.</p>
   </div>
   {{end}}
 
