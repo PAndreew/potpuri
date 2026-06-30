@@ -159,6 +159,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/account/feed-contribution", s.feedContributionSaveHTML)
 	mux.HandleFunc("/account/harnesses", s.harnessesHTML)
 	mux.HandleFunc("/account/harnesses/revoke", s.revokeHarnessHTML)
+	mux.HandleFunc("/account/password", s.changePasswordHTML)
 	mux.HandleFunc("/account/delete", s.deleteAccountHTML)
 	mux.HandleFunc("/export", s.exportHandler)
 	mux.HandleFunc("/tokens", s.tokensHTML)
@@ -961,6 +962,27 @@ func (s *Server) authorizeFeedService(r *http.Request) bool {
 	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	got := sha256.Sum256([]byte(provided))
 	return s.config.FeedServiceToken != "" && provided != "" && subtle.ConstantTimeCompare(want[:], got[:]) == 1
+}
+
+func (s *Server) changePasswordHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		return
+	}
+	userID, err := s.currentUserID(r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := s.svc.ChangePassword(r.Context(), usecase.ChangePasswordInput{
+		UserID:          userID,
+		CurrentPassword: r.FormValue("current_password"),
+		NewPassword:     r.FormValue("new_password"),
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/account", http.StatusSeeOther)
 }
 
 func (s *Server) deleteAccountHTML(w http.ResponseWriter, r *http.Request) {

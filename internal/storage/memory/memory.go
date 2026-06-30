@@ -102,6 +102,19 @@ func (s *Store) SetEmailVerified(ctx context.Context, userID string) error {
 	return errors.New("user not found")
 }
 
+func (s *Store) UpdatePassword(ctx context.Context, userID string, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for email, u := range s.users {
+		if u.ID == userID {
+			u.PasswordHash = passwordHash
+			s.users[email] = u
+			return nil
+		}
+	}
+	return errors.New("user not found")
+}
+
 func (s *Store) SetCaptureMode(ctx context.Context, userID string, mode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

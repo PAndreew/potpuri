@@ -142,6 +142,72 @@ func TestUserCanDeleteOnlyTheirOwnItem(t *testing.T) {
 	}
 }
 
+func TestChangePassword(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("succeeds with correct current password", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		user, err := svc.Register(ctx, usecase.RegisterInput{Email: "chpw@example.com", Password: "oldpassword"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.ChangePassword(ctx, usecase.ChangePasswordInput{
+			UserID:          user.ID,
+			CurrentPassword: "oldpassword",
+			NewPassword:     "newpassword123",
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, err := svc.Login(ctx, user.Email, "newpassword123"); err != nil {
+			t.Fatal("login with new password failed:", err)
+		}
+	})
+
+	t.Run("rejects wrong current password", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		user, err := svc.Register(ctx, usecase.RegisterInput{Email: "chpw2@example.com", Password: "oldpassword"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = svc.ChangePassword(ctx, usecase.ChangePasswordInput{
+			UserID:          user.ID,
+			CurrentPassword: "wrongpassword",
+			NewPassword:     "newpassword123",
+		})
+		if err == nil {
+			t.Fatal("expected error for wrong current password")
+		}
+	})
+
+	t.Run("rejects new password shorter than 8 chars", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		user, err := svc.Register(ctx, usecase.RegisterInput{Email: "chpw3@example.com", Password: "oldpassword"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = svc.ChangePassword(ctx, usecase.ChangePasswordInput{
+			UserID:          user.ID,
+			CurrentPassword: "oldpassword",
+			NewPassword:     "short",
+		})
+		if err == nil {
+			t.Fatal("expected error for too-short new password")
+		}
+	})
+
+	t.Run("rejects empty userID", func(t *testing.T) {
+		svc, _ := newTestService(t)
+		err := svc.ChangePassword(ctx, usecase.ChangePasswordInput{
+			UserID:          "",
+			CurrentPassword: "oldpassword",
+			NewPassword:     "newpassword123",
+		})
+		if err == nil {
+			t.Fatal("expected unauthorized error")
+		}
+	})
+}
+
 func TestLoginCreatesUsableSession(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)

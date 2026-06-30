@@ -449,6 +449,33 @@ func (s *Service) ListUsers(ctx context.Context) ([]domain.User, error) {
 	return s.users.ListUsers(ctx)
 }
 
+type ChangePasswordInput struct {
+	UserID          string
+	CurrentPassword string
+	NewPassword     string
+}
+
+func (s *Service) ChangePassword(ctx context.Context, input ChangePasswordInput) error {
+	if input.UserID == "" {
+		return ErrUnauthorized
+	}
+	user, err := s.users.FindUserByID(ctx, input.UserID)
+	if err != nil {
+		return ErrUnauthorized
+	}
+	if !s.hasher.Verify(user.PasswordHash, input.CurrentPassword) {
+		return fmt.Errorf("incorrect password")
+	}
+	if len(input.NewPassword) < 8 {
+		return fmt.Errorf("new password must be at least 8 characters")
+	}
+	hash, err := s.hasher.Hash(input.NewPassword)
+	if err != nil {
+		return err
+	}
+	return s.users.UpdatePassword(ctx, input.UserID, hash)
+}
+
 func (s *Service) DeleteAccount(ctx context.Context, userID, password string) error {
 	if userID == "" {
 		return ErrUnauthorized

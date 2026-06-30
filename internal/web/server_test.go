@@ -1798,3 +1798,93 @@ func TestTOTPSetupConfirmAndDisableFlow(t *testing.T) {
 		t.Fatal("expected TOTP to be disabled after DisableTOTP")
 	}
 }
+
+func newTestWebService(t *testing.T) (*usecase.Service, *memory.Store) {
+	t.Helper()
+	store := memory.New()
+	cipher, err := security.NewCipher([]byte("12345678901234567890123456789012"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := usecase.NewService(usecase.NewServiceParams{
+		Users:    store,
+		Items:    store,
+		Sessions: store,
+		Cipher:   cipher,
+		Hasher:   security.NewPasswordHasher(),
+	})
+	return svc, store
+}
+
+func TestChangePasswordHTMLRedirectsOnSuccess(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "cpw@example.com", Password: "oldpassword"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := mustLogin(t, svc, user.Email, "oldpassword")
+	server := web.NewServer(svc)
+
+	form := url.Values{}
+	form.Set("current_password", "oldpassword")
+	form.Set("new_password", "newpassword123")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/account/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/account" {
+		t.Fatalf("expected redirect to /account, got %s", loc)
+	}
+
+	if _, err := svc.Login(context.Background(), user.Email, "newpassword123"); err != nil {
+		t.Fatal("login with new password failed:", err)
+	}
+}
+
+func TestChangePasswordHTMLRejectsWrongCurrentPassword(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "cpw2@example.com", Password: "oldpassword"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := mustLogin(t, svc, user.Email, "oldpassword")
+	server := web.NewServer(svc)
+
+	form := url.Values{}
+	form.Set("current_password", "wrongpassword")
+	form.Set("new_password", "newpassword123")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/account/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "potpuri_session", Value: token})
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChangePasswordHTMLRequiresLogin(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	server := web.NewServer(svc)
+
+	form := url.Values{}
+	form.Set("current_password", "oldpassword")
+	form.Set("new_password", "newpassword123")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/account/password", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect to login, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %s", loc)
+	}
+}

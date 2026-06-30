@@ -23,6 +23,7 @@ type UserRepository interface {
 	ActivateTOTP(ctx context.Context, userID string) error
 	DisableTOTP(ctx context.Context, userID string) error
 	FindTOTPSecret(ctx context.Context, userID string) ([]byte, error)
+	UpdatePassword(ctx context.Context, userID string, passwordHash string) error
 }
 
 type StoredEmailVerification struct {

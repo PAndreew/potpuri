@@ -80,6 +80,11 @@ from users order by created_at desc`)
 	return users, rows.Err()
 }
 
+func (s *Store) UpdatePassword(ctx context.Context, userID string, passwordHash string) error {
+	_, err := s.db.ExecContext(ctx, `update users set password_hash = $2 where id = $1`, userID, passwordHash)
+	return err
+}
+
 func (s *Store) SetCaptureMode(ctx context.Context, userID string, mode string) error {
 	_, err := s.db.ExecContext(ctx, `update users set capture_mode = $2 where id = $1`, userID, mode)
 	return err
