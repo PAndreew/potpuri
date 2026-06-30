@@ -570,9 +570,12 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 				// iOS Shortcuts sometimes omits padding
 				imageBytes, err = base64.RawStdEncoding.DecodeString(input.Image)
 			}
-			if err == nil && len(imageBytes) > 0 {
+			// Only treat as a blob if the bytes actually look like image data.
+			// This lets the Shortcut always send base64(Shortcut Input) without
+			// branching: text/URL inputs decode to ASCII and are silently ignored.
+			if err == nil && looksLikeImage(imageBytes) {
 				filename := firstNonEmpty(input.Filename, "photo.jpg")
-				mimeType := firstNonEmpty(input.ContentType, "image/jpeg")
+				mimeType := firstNonEmpty(input.ContentType, detectImageMIME(imageBytes))
 				itemInput.Blobs = append(itemInput.Blobs, usecase.BlobInput{
 					Filename:    filename,
 					ContentType: mimeType,
@@ -1627,6 +1630,52 @@ func uploadedFiles(r *http.Request) ([]usecase.BlobInput, string, error) {
 		blobs = append(blobs, usecase.BlobInput{Filename: header.Filename, ContentType: contentType, Content: content})
 	}
 	return blobs, firstFilename, nil
+}
+
+// looksLikeImage checks magic bytes so the Shortcut can always send
+// base64(Shortcut Input) without branching — text and URLs decode to
+// ASCII/UTF-8 and will not match any of these patterns.
+func looksLikeImage(b []byte) bool {
+	// JPEG: FF D8 FF
+	if len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF {
+		return true
+	}
+	// PNG: 89 50 4E 47
+	if len(b) >= 4 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47 {
+		return true
+	}
+	// GIF: GIF8
+	if len(b) >= 4 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x38 {
+		return true
+	}
+	// WebP: RIFF....WEBP
+	if len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP" {
+		return true
+	}
+	// HEIC/HEIF/MP4 (ISO Base Media): ftyp box at offset 4
+	if len(b) >= 8 && string(b[4:8]) == "ftyp" {
+		return true
+	}
+	return false
+}
+
+func detectImageMIME(b []byte) string {
+	if len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF {
+		return "image/jpeg"
+	}
+	if len(b) >= 4 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47 {
+		return "image/png"
+	}
+	if len(b) >= 4 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x38 {
+		return "image/gif"
+	}
+	if len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP" {
+		return "image/webp"
+	}
+	if len(b) >= 8 && string(b[4:8]) == "ftyp" {
+		return "image/heic"
+	}
+	return "image/jpeg"
 }
 
 func splitUploadedFiles(body string) (string, string) {

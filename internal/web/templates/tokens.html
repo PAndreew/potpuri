@@ -14,31 +14,24 @@
     <p>Drag this link to your bookmarks bar. Click it on any page to save it to Potpuri.</p>
     <a class="bookmarklet-link" href="javascript:(function(){var t='{{.NewToken}}',u='{{.BaseURL}}/api/clipboard',s=window.getSelection().toString();fetch(u,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+t},body:JSON.stringify({title:document.title,url:location.href,text:s})}).then(function(r){if(r.ok)alert('Saved to Potpuri!');else r.text().then(function(m){alert('Error: '+m);});}).catch(function(e){alert('Error: '+e);});})();">Save to Potpuri</a>
     <p class="token-hint">You can also call the API directly:<br><code>curl -X POST {{.BaseURL}}/api/clipboard \<br>&nbsp;&nbsp;-H 'Authorization: Bearer {{.NewToken}}' \<br>&nbsp;&nbsp;-H 'Content-Type: application/json' \<br>&nbsp;&nbsp;-d '{"title":"My note","text":"body here"}'</code></p>
-    <h3 class="bookmarklet-heading">iOS Shortcut — URLs and text</h3>
-    <p>Build a Shortcut named <strong>Save to Potpuri</strong>. In Shortcut Details, enable <strong>Show in Share Sheet</strong>, then set <strong>Receive</strong> to URLs, Safari webpages, and text. If it does not appear in an app's share sheet, add <strong>Any</strong> while testing.</p>
+    <h3 class="bookmarklet-heading">iOS Shortcut — one shortcut for everything</h3>
+    <p>This single shortcut handles URLs, text, and photos from any share sheet. The server detects image bytes automatically, so always sending base64 is safe — text and URLs are silently ignored as non-image data.</p>
     <ol class="shortcut-steps">
-      <li>Add <strong>URL</strong> and set it to the endpoint below.</li>
-      <li>Add <strong>Get Details of Shortcut Input</strong> for <strong>Name</strong>. Use that result as the <code>title</code> form field.</li>
-      <li>Add <strong>Get Details of Shortcut Input</strong> for <strong>URL</strong>. Use that result as the <code>url</code> form field.</li>
-      <li>Add <strong>Text</strong> containing <strong>Shortcut Input</strong>. Use that result as the <code>text</code> form field.</li>
-      <li>Add <strong>Get Contents of URL</strong>. Set method to <strong>POST</strong>, request body to <strong>Form</strong>, and add the fields below.</li>
+      <li>In Shortcut Details enable <strong>Show in Share Sheet</strong> and set <strong>Receive</strong> to <strong>Any</strong>.</li>
+      <li>Add <strong>Get Details of Shortcut Input</strong> → <strong>Name</strong>. Save result as <em>ItemTitle</em>.</li>
+      <li>Add <strong>Get Details of Shortcut Input</strong> → <strong>URL</strong>. Save result as <em>ItemURL</em>.</li>
+      <li>Add <strong>Encode Base64</strong> (search "Base64"). Input: <strong>Shortcut Input</strong>, mode: <strong>Encode</strong>. Save result as <em>Encoded</em>.</li>
+      <li>Add <strong>Get Contents of URL</strong>. Method: <strong>POST</strong>, body: <strong>JSON</strong>, URL: <code>{{.BaseURL}}/api/shortcut</code>.</li>
+      <li>Add these JSON fields:
+        <ul>
+          <li><code>token</code> &rarr; <code>{{.NewToken}}</code></li>
+          <li><code>title</code> &rarr; <em>ItemTitle</em></li>
+          <li><code>url</code> &rarr; <em>ItemURL</em></li>
+          <li><code>image</code> &rarr; <em>Encoded</em></li>
+        </ul>
+      </li>
     </ol>
-    <p class="token-hint">Shortcut endpoint:<br><code>{{.BaseURL}}/api/shortcut</code></p>
-    <p class="token-hint">Form fields:<br><code>token = {{.NewToken}}<br>title = Name from Shortcut Input<br>url = URL from Shortcut Input<br>text = Shortcut Input</code></p>
-    <p class="token-hint">Use <strong>Get Contents of URL</strong>, not <strong>Share</strong> or <strong>Share with Apps</strong>. Those actions hand content to another app; Potpuri needs a POST request to the endpoint above. <strong>Run JavaScript on Webpage</strong> is optional and Safari-only; it can extract selected text or page metadata, but it still needs to pass the result into the same POST request.</p>
-    <h3 class="bookmarklet-heading">iOS Shortcut — Photos and images</h3>
-    <p>iOS converts a photo to its filename when you put it in a text field, so images need a separate encoding step. Create a Shortcut that base64-encodes the photo before sending:</p>
-    <ol class="shortcut-steps">
-      <li>In Shortcut Details enable <strong>Show in Share Sheet</strong> and set <strong>Receive</strong> to <strong>Images</strong> (or <strong>Any</strong>).</li>
-      <li>Add <strong>Encode Base64</strong> (search "Base64"). Input: <strong>Shortcut Input</strong>. Leave encoding as <strong>Encode</strong>. Name the output <em>Encoded</em>.</li>
-      <li>Add <strong>Get Contents of URL</strong>. Set method to <strong>POST</strong>, request body to <strong>JSON</strong>.</li>
-      <li>Add a <strong>Text</strong> field named <code>token</code> with the value <code>{{.NewToken}}</code>.</li>
-      <li>Add a <strong>Text</strong> field named <code>image</code> and set its value to the <em>Encoded</em> variable from step 2.</li>
-      <li>Add a <strong>Text</strong> field named <code>filename</code> with a value like <code>photo.jpg</code>.</li>
-      <li>Optionally add a <strong>Text</strong> field named <code>title</code>.</li>
-      <li>Set the URL to <code>{{.BaseURL}}/api/shortcut</code>.</li>
-    </ol>
-    <p class="token-hint">The image is decoded and stored encrypted on the server. The base64 step is necessary because iOS treats photos as objects, not raw bytes, when building a request.</p>
+    <p class="token-hint">No branching needed. Sharing a URL saves a link. Sharing text saves a note. Sharing a photo stores it as an encrypted attachment.</p>
   </div>
   {{end}}
 

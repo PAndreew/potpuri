@@ -1069,7 +1069,7 @@ func TestTokensPageShowsIOSShortcutRecipeForNewToken(t *testing.T) {
 		t.Fatalf("expected tokens page, got %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"iOS Shortcut", "/api/shortcut", "Show in Share Sheet", "Receive", "Get Contents of URL", "Share with Apps", "Run JavaScript on Webpage", "token = pt_testtoken"} {
+	for _, want := range []string{"iOS Shortcut", "/api/shortcut", "Show in Share Sheet", "Receive", "Get Contents of URL", "Encode Base64", "pt_testtoken"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("tokens page missing %q: %s", want, body)
 		}
@@ -1888,6 +1888,42 @@ func TestChangePasswordHTMLRequiresLogin(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/login" {
 		t.Fatalf("expected redirect to /login, got %s", loc)
+	}
+}
+
+func TestShortcutAPIIgnoresBase64WhenNotAnImage(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64-text@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	// Shortcut always sends image=base64(input); for a URL share the input is just the URL string
+	urlText := "https://example.com/article"
+	body := fmt.Sprintf(`{"token":%q,"title":"Great article","url":%q,"image":%q}`,
+		apiToken, urlText, base64.StdEncoding.EncodeToString([]byte(urlText)))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if len(items[0].Blobs) != 0 {
+		t.Fatalf("expected no blobs for text/URL input, got %d", len(items[0].Blobs))
+	}
+	if items[0].SourceURL != urlText {
+		t.Fatalf("expected source URL %q, got %q", urlText, items[0].SourceURL)
 	}
 }
 
