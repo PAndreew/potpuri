@@ -27,16 +27,18 @@
     <p class="token-hint">Form fields:<br><code>token = {{.NewToken}}<br>title = Name from Shortcut Input<br>url = URL from Shortcut Input<br>text = Shortcut Input</code></p>
     <p class="token-hint">Use <strong>Get Contents of URL</strong>, not <strong>Share</strong> or <strong>Share with Apps</strong>. Those actions hand content to another app; Potpuri needs a POST request to the endpoint above. <strong>Run JavaScript on Webpage</strong> is optional and Safari-only; it can extract selected text or page metadata, but it still needs to pass the result into the same POST request.</p>
     <h3 class="bookmarklet-heading">iOS Shortcut — Photos and images</h3>
-    <p>To send a photo from the Camera Roll or Photos share sheet, create a separate Shortcut that receives images:</p>
+    <p>iOS converts a photo to its filename when you put it in a text field, so images need a separate encoding step. Create a Shortcut that base64-encodes the photo before sending:</p>
     <ol class="shortcut-steps">
       <li>In Shortcut Details enable <strong>Show in Share Sheet</strong> and set <strong>Receive</strong> to <strong>Images</strong> (or <strong>Any</strong>).</li>
-      <li>Add <strong>Get Contents of URL</strong>. Set method to <strong>POST</strong>, request body to <strong>Form</strong>.</li>
+      <li>Add <strong>Encode Base64</strong> (search "Base64"). Input: <strong>Shortcut Input</strong>. Leave encoding as <strong>Encode</strong>. Name the output <em>Encoded</em>.</li>
+      <li>Add <strong>Get Contents of URL</strong>. Set method to <strong>POST</strong>, request body to <strong>JSON</strong>.</li>
       <li>Add a <strong>Text</strong> field named <code>token</code> with the value <code>{{.NewToken}}</code>.</li>
-      <li>Add a <strong>File</strong> field named <code>file</code> and set its value to <strong>Shortcut Input</strong>.</li>
-      <li>Optionally add a <strong>Text</strong> field named <code>title</code> for a custom title.</li>
+      <li>Add a <strong>Text</strong> field named <code>image</code> and set its value to the <em>Encoded</em> variable from step 2.</li>
+      <li>Add a <strong>Text</strong> field named <code>filename</code> with a value like <code>photo.jpg</code>.</li>
+      <li>Optionally add a <strong>Text</strong> field named <code>title</code>.</li>
       <li>Set the URL to <code>{{.BaseURL}}/api/shortcut</code>.</li>
     </ol>
-    <p class="token-hint">The image is stored encrypted alongside any title or notes you add. You can send multiple images by adding more <code>file</code> fields or by using the <strong>Repeat with Each</strong> action.</p>
+    <p class="token-hint">The image is decoded and stored encrypted on the server. The base64 step is necessary because iOS treats photos as objects, not raw bytes, when building a request.</p>
   </div>
   {{end}}
 

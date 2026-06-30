@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1887,6 +1888,69 @@ func TestChangePasswordHTMLRequiresLogin(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/login" {
 		t.Fatalf("expected redirect to /login, got %s", loc)
+	}
+}
+
+func TestShortcutAPIAcceptsBase64Image(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	fakeJPEG := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	body := fmt.Sprintf(`{"token":%q,"title":"Sunset","image":%q,"filename":"sunset.jpg","content_type":"image/jpeg"}`,
+		apiToken, base64.StdEncoding.EncodeToString(fakeJPEG))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Title != "Sunset" {
+		t.Fatalf("expected title Sunset, got %q", items[0].Title)
+	}
+	if len(items[0].Blobs) != 1 || items[0].Blobs[0].Filename != "sunset.jpg" {
+		t.Fatalf("expected blob sunset.jpg, got %#v", items[0].Blobs)
+	}
+}
+
+func TestShortcutAPIAcceptsBase64ImageWithoutTitle(t *testing.T) {
+	svc, _ := newTestWebService(t)
+	user, err := svc.Register(context.Background(), usecase.RegisterInput{Email: "shortcut-b64-notitle@example.com", Password: "correct horse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiToken := mustCreateAPIToken(t, svc, user.ID)
+	server := web.NewServer(svc)
+
+	fakeJPEG := []byte{0xFF, 0xD8, 0xFF}
+	body := fmt.Sprintf(`{"token":%q,"image":%q,"filename":"IMG_0042.jpg"}`, apiToken, base64.StdEncoding.EncodeToString(fakeJPEG))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shortcut", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for untitled image, got %d %s", rec.Code, rec.Body.String())
+	}
+	items, err := svc.ListItems(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(items[0].Blobs) != 1 {
+		t.Fatalf("expected 1 item with 1 blob, got items=%d", len(items))
 	}
 }
 

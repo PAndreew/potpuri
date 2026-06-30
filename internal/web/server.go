@@ -531,7 +531,10 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var itemInput usecase.CreateItemInput
 	var hasContent bool
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+	var token string
+	ct := r.Header.Get("Content-Type")
+	switch {
+	case strings.HasPrefix(ct, "multipart/form-data"):
 		var err error
 		itemInput, err = itemInputFromRequest(r)
 		if err != nil {
@@ -543,15 +546,57 @@ func (s *Server) shortcutAPI(w http.ResponseWriter, r *http.Request) {
 			strings.TrimSpace(r.FormValue("body")) != "" ||
 			strings.TrimSpace(r.FormValue("source_url")) != "" ||
 			len(itemInput.Blobs) > 0
-	} else {
+		token = strings.TrimSpace(r.FormValue("token"))
+	case strings.HasPrefix(ct, "application/json"):
+		var input struct {
+			Token       string `json:"token"`
+			Text        string `json:"text"`
+			Title       string `json:"title"`
+			URL         string `json:"url"`
+			Source      string `json:"source"`
+			Image       string `json:"image"`        // base64-encoded image bytes
+			Filename    string `json:"filename"`     // suggested filename
+			ContentType string `json:"content_type"` // MIME type of image
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		token = strings.TrimSpace(input.Token)
+		itemInput = itemInputFromClipboardText(input.Text, input.Title, firstNonEmpty(input.URL, input.Source))
+		if input.Image != "" {
+			imageBytes, err := base64.StdEncoding.DecodeString(input.Image)
+			if err != nil {
+				// iOS Shortcuts sometimes omits padding
+				imageBytes, err = base64.RawStdEncoding.DecodeString(input.Image)
+			}
+			if err == nil && len(imageBytes) > 0 {
+				filename := firstNonEmpty(input.Filename, "photo.jpg")
+				mimeType := firstNonEmpty(input.ContentType, "image/jpeg")
+				itemInput.Blobs = append(itemInput.Blobs, usecase.BlobInput{
+					Filename:    filename,
+					ContentType: mimeType,
+					Content:     imageBytes,
+				})
+				if strings.TrimSpace(itemInput.Title) == "" {
+					itemInput.Title = filename
+				}
+			}
+		}
+		hasContent = hasCaptureContent(itemInput)
+	default:
 		if err := r.ParseForm(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		token = strings.TrimSpace(r.FormValue("token"))
 		itemInput = itemInputFromClipboardText(r.FormValue("text"), r.FormValue("title"), firstNonEmpty(r.FormValue("url"), r.FormValue("source")))
 		hasContent = hasCaptureContent(itemInput)
 	}
-	token := strings.TrimSpace(firstNonEmpty(r.FormValue("token"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
+	if token == "" {
+		token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	token = strings.TrimSpace(token)
 	if token == "" {
 		http.Error(w, "token is required", http.StatusUnauthorized)
 		return
